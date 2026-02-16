@@ -129,8 +129,10 @@ async function main() {
     for (const task of tasks) {
       const t = await tem.task.getById(task.id);
       const status = t?.status === 'completed' ? '✓ Completed' : '✗ Failed';
-      const attempts = attemptCounts.get(task.payload.id as number) ?? 0;
-      console.log(`  Task ${task.payload.id}: ${status} (${attempts} attempt(s))`);
+      // should parse and get id from payload
+      const payload = JSON.parse(task.payload);
+      const attempts = attemptCounts.get(payload.id as number) ?? 0;
+      console.log(`  Task ${payload.id}: ${status} (${attempts} attempt(s))`);
     }
 
     // Explanation
