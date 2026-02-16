@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:mock-server": "bun test tests/integration/mock-server.test.ts",
+    "test:tem-mock-server": "bun test tests/integration/tem-with-mock-server.test.ts",
     "lint": "oxlint",
     "lint:file": "oxlint",
     "dev": "bun --watch src/index.ts"
