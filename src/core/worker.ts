@@ -45,8 +45,11 @@ export class Worker {
   /**
    * Register a handler for a specific task type.
    */
-  register(type: string, handler: i.TaskHandler): void {
-    this.handlers.set(type, handler);
+  register<TInput = unknown, TOutput = unknown>(
+    type: string,
+    handler: i.TaskHandler<TInput, TOutput>
+  ): void {
+    this.handlers.set(type, handler as i.TaskHandler);
   }
 
   /**
