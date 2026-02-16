@@ -41,7 +41,7 @@ Don't use tem when you need:
 ## Quick Start
 
 ```typescript
-import { TEM } from "tem";
+import { TEM } from "@qian/tem";
 
 // Initialize
 const tem = new TEM({

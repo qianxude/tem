@@ -1,0 +1,6 @@
+[install]
+cache = true
+exact = true
+
+[test]
+preload = "./tests/setup.ts"
