@@ -14,7 +14,7 @@ import { TEM } from '../src/core/tem.js';
 async function main() {
   // Initialize TEM
   const tem = new TEM({
-    databasePath: './basic-example.db',
+    databasePath: './datasets/basic-example.db',
     concurrency: 3,
     defaultMaxAttempts: 3,
     pollIntervalMs: 100,
