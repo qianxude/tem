@@ -1,6 +1,13 @@
 import { Database, type DatabaseOptions } from '../database/index.js';
 import { BatchService, TaskService } from '../services/index.js';
 import { Worker, type WorkerConfig } from './worker.js';
+import {
+  detectConstraints,
+  type DetectOptions,
+  type DetectedConfig,
+} from '../utils/auto-detect.js';
+
+export type { DetectOptions, DetectedConfig };
 
 export interface TEMConfig {
   // Database
@@ -28,6 +35,39 @@ export class TEM {
   readonly worker: Worker;
 
   private database: Database;
+
+  /**
+   * Auto-detect API constraints including maximum concurrency and rate limits.
+   * Uses binary search for concurrency detection and burst testing for rate limits.
+   *
+   * @example
+   * ```typescript
+   * const config = await TEM.detectConstraints({
+   *   url: 'https://api.openai.com/v1/chat/completions',
+   *   method: 'POST',
+   *   headers: {
+   *     'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY,
+   *     'Content-Type': 'application/json'
+   *   },
+   *   body: {
+   *     model: 'gpt-4o-mini',
+   *     messages: [{ role: 'user', content: 'Hi' }],
+   *     max_tokens: 10
+   *   }
+   * });
+   *
+   * const tem = new TEM({
+   *   databasePath: './tasks.db',
+   *   concurrency: config.concurrency,
+   *   rateLimit: config.rateLimit,
+   *   defaultMaxAttempts: 3,
+   *   pollIntervalMs: 100
+   * });
+   * ```
+   */
+  static async detectConstraints(options: DetectOptions): Promise<DetectedConfig> {
+    return detectConstraints(options);
+  }
 
   constructor(config: TEMConfig) {
     // Initialize database

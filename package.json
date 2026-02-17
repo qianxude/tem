@@ -13,6 +13,7 @@
     "test:mock-server": "bun test tests/integration/mock-server.test.ts",
     "test:simple-tasks": "bun test tests/integration/tem-with-mock-server.test.ts",
     "test:complex-tasks": "bun test tests/integration/llm-provider-simulation.test.ts",
+    "test:auto-detect": "bun test tests/integration/auto-detect.test.ts",
     "lint": "oxlint",
     "lint:file": "oxlint",
     "dev": "bun --watch src/index.ts"

@@ -70,6 +70,41 @@ export interface TEMConfig {
 }
 
 // ============================================================================
+// Auto-Detect Configuration
+// ============================================================================
+
+export interface DetectOptions {
+  /** Target URL to test */
+  url: string;
+  /** HTTP method to use (default: GET) */
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  /** Request headers to include */
+  headers?: Record<string, string>;
+  /** Request body (will be JSON stringified for POST/PUT/PATCH) */
+  body?: unknown;
+  /** Request timeout in milliseconds (default: 30000) */
+  timeoutMs?: number;
+  /** Maximum concurrency level to test (default: 100) */
+  maxConcurrencyToTest?: number;
+  /** Duration to run rate limit tests (default: 10000) */
+  rateLimitTestDurationMs?: number;
+}
+
+export interface DetectedConfig {
+  /** Recommended concurrency (80% of detected max) */
+  concurrency: number;
+  /** Recommended rate limit (90% of detected limit) */
+  rateLimit: {
+    requests: number;
+    windowMs: number;
+  };
+  /** Confidence level in the detection results */
+  confidence: 'high' | 'medium' | 'low';
+  /** Notes about the detection process and findings */
+  notes: string[];
+}
+
+// ============================================================================
 // Task Handler
 // ============================================================================
 
