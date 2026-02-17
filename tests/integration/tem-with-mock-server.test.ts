@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { TEM } from '../../src/core/tem.js';
 import { NonRetryableError } from '../../src/core/worker.js';
-import { startMockServer, stopMockServer } from '../../src/mock-server/index.js';
+import { startMockServer, stopMockServer, createMockService } from '../../src/mock-server/index.js';
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
 import { waitForBatch } from '../../src/utils/index.js';
@@ -25,24 +25,6 @@ interface ApiTaskResult {
   requestId: string;
   meta: { ts: number; rt: number };
   data: string;
-}
-
-// Helper to create a configured mock service
-async function createMockService(
-  name: string,
-  config: {
-    maxConcurrency: number;
-    rateLimit: { limit: number; windowMs: number };
-    delayMs: [number, number];
-  }
-): Promise<string> {
-  const res = await fetch(`${MOCK_URL}/service/${name}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-  expect(res.status).toBe(201);
-  return name;
 }
 
 describe('TEM with Mock Server Integration', () => {
@@ -85,11 +67,12 @@ describe('TEM with Mock Server Integration', () => {
   describe('Basic API Call Processing', () => {
     it('should process tasks that make real HTTP calls to mock server', async () => {
       // Create mock service with generous limits for basic test
-      await createMockService('basic-api', {
+      const res = await createMockService('basic-api', {
         maxConcurrency: 10,
         rateLimit: { limit: 100, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       // Create TEM instance
       tem = new TEM({
@@ -187,11 +170,12 @@ describe('TEM with Mock Server Integration', () => {
     });
 
     it('should handle different HTTP methods and payloads', async () => {
-      await createMockService('methods-api', {
+      const res = await createMockService('methods-api', {
         maxConcurrency: 10,
         rateLimit: { limit: 1000, windowMs: 1000 },
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -261,11 +245,12 @@ describe('TEM with Mock Server Integration', () => {
     it('should handle 429 responses and retry automatically', async () => {
       // Create service with moderate rate limit
       // Use shorter window for faster refill during retries
-      await createMockService('rate-limited-api', {
+      const res = await createMockService('rate-limited-api', {
         maxConcurrency: 10,
         rateLimit: { limit: 3, windowMs: 200 }, // 3 per 200ms
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -342,11 +327,12 @@ describe('TEM with Mock Server Integration', () => {
 
     it('should respect external API rate limits over time', async () => {
       // Use moderate rate limit with short window
-      await createMockService('strict-rate-limit', {
+      const res = await createMockService('strict-rate-limit', {
         maxConcurrency: 10,
         rateLimit: { limit: 2, windowMs: 150 }, // 2 per 150ms
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -415,11 +401,12 @@ describe('TEM with Mock Server Integration', () => {
     it('should handle 503 responses when external API is at capacity', async () => {
       // Create service with moderate concurrency - balance between testing 503s
       // and allowing tasks to eventually succeed
-      await createMockService('low-concurrency-api', {
+      const res = await createMockService('low-concurrency-api', {
         maxConcurrency: 3,
         rateLimit: { limit: 100, windowMs: 1000 },
         delayMs: [30, 50], // Moderate delays
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -502,11 +489,12 @@ describe('TEM with Mock Server Integration', () => {
     it('should not exceed external API concurrency limits', async () => {
       const maxConcurrency = 3;
 
-      await createMockService('tracked-concurrency', {
+      const res = await createMockService('tracked-concurrency', {
         maxConcurrency,
         rateLimit: { limit: 100, windowMs: 1000 },
         delayMs: [30, 50],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -587,23 +575,26 @@ describe('TEM with Mock Server Integration', () => {
     it('should handle mix of success, rate limit, and concurrency errors', async () => {
       // Create multiple services with different constraints
       // Use more generous limits to allow tasks to eventually succeed
-      await createMockService('mixed-service-1', {
+      const res1 = await createMockService('mixed-service-1', {
         maxConcurrency: 8,
         rateLimit: { limit: 15, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res1.status).toBe(201);
 
-      await createMockService('mixed-service-2', {
+      const res2 = await createMockService('mixed-service-2', {
         maxConcurrency: 4,
         rateLimit: { limit: 8, windowMs: 1000 },
         delayMs: [20, 30],
-      });
+      }, MOCK_URL);
+      expect(res2.status).toBe(201);
 
-      await createMockService('mixed-service-3', {
+      const res3 = await createMockService('mixed-service-3', {
         maxConcurrency: 15,
         rateLimit: { limit: 50, windowMs: 1000 },
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res3.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -714,11 +705,12 @@ describe('TEM with Mock Server Integration', () => {
     });
 
     it('should handle non-retryable errors correctly', async () => {
-      await createMockService('error-service', {
+      const res = await createMockService('error-service', {
         maxConcurrency: 5,
         rateLimit: { limit: 100, windowMs: 1000 },
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -812,11 +804,12 @@ describe('TEM with Mock Server Integration', () => {
   describe('Large Batch Processing', () => {
     it('should process 100+ tasks efficiently', async () => {
       // Use very generous limits for large batch to ensure reliable completion
-      await createMockService('large-batch-service', {
+      const res = await createMockService('large-batch-service', {
         maxConcurrency: 25,
         rateLimit: { limit: 200, windowMs: 1000 }, // Very high rate limit
         delayMs: [2, 5], // Very short delays
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -905,11 +898,12 @@ describe('TEM with Mock Server Integration', () => {
     }, 60000);
 
     it('should handle large batches with varying delays', async () => {
-      await createMockService('variable-delay-service', {
+      const res = await createMockService('variable-delay-service', {
         maxConcurrency: 15,
         rateLimit: { limit: 100, windowMs: 1000 },
         delayMs: [1, 10], // Variable but short delay
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,
@@ -983,23 +977,26 @@ describe('TEM with Mock Server Integration', () => {
     it('should simulate realistic API workload with mixed constraints', async () => {
       // Simulate a realistic setup with multiple API endpoints
       // Use generous limits to ensure tasks complete reliably
-      await createMockService('user-api', {
+      const res1 = await createMockService('user-api', {
         maxConcurrency: 8,
         rateLimit: { limit: 30, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res1.status).toBe(201);
 
-      await createMockService('order-api', {
+      const res2 = await createMockService('order-api', {
         maxConcurrency: 10,
         rateLimit: { limit: 40, windowMs: 1000 },
         delayMs: [8, 15],
-      });
+      }, MOCK_URL);
+      expect(res2.status).toBe(201);
 
-      await createMockService('inventory-api', {
+      const res3 = await createMockService('inventory-api', {
         maxConcurrency: 6,
         rateLimit: { limit: 20, windowMs: 1000 },
         delayMs: [15, 25],
-      });
+      }, MOCK_URL);
+      expect(res3.status).toBe(201);
 
       tem = new TEM({
         databasePath: dbPath,

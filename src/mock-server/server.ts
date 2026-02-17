@@ -2,6 +2,8 @@ import type * as i from './types';
 import { MockService } from './service';
 import { createRouter } from './router';
 
+const DEFAULT_MOCK_URL = 'http://localhost:19999';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BunServer = any;
 
@@ -102,4 +104,24 @@ export function stopMockServer(): void {
   }
   globalState.services.clear();
   globalState.defaultService = null;
+}
+
+/**
+ * Client helper to create a configured mock service on the mock server.
+ * @param name - Unique service name/identifier
+ * @param config - Service configuration (concurrency, rate limit, delay)
+ * @param mockUrl - Base URL of the mock server (defaults to localhost:19999)
+ * @returns The Response object from the fetch call
+ */
+export async function createMockService(
+  name: string,
+  config: i.CreateServiceRequest,
+  mockUrl: string = DEFAULT_MOCK_URL
+): Promise<Response> {
+  const res = await fetch(`${mockUrl}/service/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  return res;
 }

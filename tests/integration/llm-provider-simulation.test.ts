@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { TEM } from '../../src/core/tem.js';
 import { NonRetryableError } from '../../src/core/worker.js';
-import { startMockServer, stopMockServer } from '../../src/mock-server/index.js';
+import { startMockServer, stopMockServer, createMockService } from '../../src/mock-server/index.js';
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
 import { waitForBatch } from '../../src/utils/index.js';
@@ -25,24 +25,6 @@ const MID_TIER_CONFIG = {
   rateLimit: { limit: 100, windowMs: 60000 },  // 100 req per 60s
   delayMs: [800, 3000] as [number, number],    // 0.8-3s response time
 };
-
-// Helper to create a configured mock service
-async function createMockService(
-  name: string,
-  config: {
-    maxConcurrency: number;
-    rateLimit: { limit: number; windowMs: number };
-    delayMs: [number, number];
-  }
-): Promise<string> {
-  const res = await fetch(`${MOCK_URL}/service/${name}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-  expect(res.status).toBe(201);
-  return name;
-}
 
 // LLM Task types
 interface LLMTaskPayload {
@@ -110,11 +92,12 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Scenario 1: Unregulated TEM (Demonstrates the Problem)', () => {
     it('should experience many 429/503 errors when TEM limits exceed API limits', async () => {
       // Create low-tier LLM provider mock with shorter delays for test speed
-      await createMockService('low-tier-llm', {
+      const res = await createMockService('low-tier-llm', {
         maxConcurrency: 2,
         rateLimit: { limit: 5, windowMs: 5000 },  // 5 per 5s window
         delayMs: [100, 300],  // Short delays for test speed
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       // TEM configured with HIGHER limits than the API (the problem)
       tem = new TEM({
@@ -232,11 +215,12 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Scenario 2: Self-Regulated TEM (The Solution)', () => {
     it('should have zero 429/503 errors when TEM limits match API limits', async () => {
       // Create low-tier LLM provider mock
-      await createMockService('regulated-llm', {
+      const res = await createMockService('regulated-llm', {
         maxConcurrency: 2,
         rateLimit: { limit: 10, windowMs: 5000 },  // 10 per 5s
         delayMs: [100, 300],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       // TEM configured to MATCH the API limits (the solution)
       tem = new TEM({
@@ -336,11 +320,12 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Scenario 3: Burst Handling with Retry Backoff', () => {
     it('should handle burst loads with exponential backoff on limit violations', async () => {
       // Create low-tier provider with stricter limits
-      await createMockService('burst-llm', {
+      const res = await createMockService('burst-llm', {
         maxConcurrency: 2,
         rateLimit: { limit: 5, windowMs: 5000 },  // 5 per 5s
         delayMs: [100, 200],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       // TEM configured properly but tasks created in burst
       tem = new TEM({
@@ -443,11 +428,12 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Scenario 4: Large Batch Processing (100+ tasks)', () => {
     it('should process 50+ tasks with realistic LLM delays efficiently', async () => {
       // Create provider with realistic LLM constraints (scaled for test)
-      await createMockService('large-batch-llm', {
+      const res = await createMockService('large-batch-llm', {
         maxConcurrency: 3,
         rateLimit: { limit: 20, windowMs: 10000 },  // 20 per 10s
         delayMs: [50, 150],  // Short delays for test
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       // Self-regulated TEM
       tem = new TEM({
@@ -559,18 +545,20 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Scenario 5: Multiple LLM Providers (Different Constraints)', () => {
     it('should handle tasks across providers with different rate limits', async () => {
       // Provider A: Low-tier (2 concurrency, 10/5s)
-      await createMockService('provider-a-llm', {
+      const res1 = await createMockService('provider-a-llm', {
         maxConcurrency: 2,
         rateLimit: { limit: 10, windowMs: 5000 },
         delayMs: [50, 100],
-      });
+      }, MOCK_URL);
+      expect(res1.status).toBe(201);
 
       // Provider B: Mid-tier (5 concurrency, 20/5s)
-      await createMockService('provider-b-llm', {
+      const res2 = await createMockService('provider-b-llm', {
         maxConcurrency: 5,
         rateLimit: { limit: 20, windowMs: 5000 },
         delayMs: [30, 80],
-      });
+      }, MOCK_URL);
+      expect(res2.status).toBe(201);
 
       // Create temp directories for both databases
       const dbPathA = join(tempDir, 'test-a.db');
@@ -746,17 +734,19 @@ describe('TEM with LLM Provider Simulation', () => {
   describe('Performance Comparison Summary', () => {
     it('should demonstrate the performance difference between regulated and unregulated', async () => {
       // Create two identical services
-      await createMockService('compare-unregulated', {
+      const res1 = await createMockService('compare-unregulated', {
         maxConcurrency: 2,
         rateLimit: { limit: 8, windowMs: 5000 },
         delayMs: [50, 100],
-      });
+      }, MOCK_URL);
+      expect(res1.status).toBe(201);
 
-      await createMockService('compare-regulated', {
+      const res2 = await createMockService('compare-regulated', {
         maxConcurrency: 2,
         rateLimit: { limit: 8, windowMs: 5000 },
         delayMs: [50, 100],
-      });
+      }, MOCK_URL);
+      expect(res2.status).toBe(201);
 
       const dbPathUnregulated = join(tempDir, 'unregulated.db');
       const dbPathRegulated = join(tempDir, 'regulated.db');

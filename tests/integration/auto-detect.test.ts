@@ -1,27 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { TEM } from '../../src/core/tem.js';
-import { startMockServer, stopMockServer } from '../../src/mock-server/index.js';
+import { startMockServer, stopMockServer, createMockService } from '../../src/mock-server/index.js';
 
 const TEST_PORT = 19997;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
-
-// Helper to create a configured mock service
-async function createMockService(
-  name: string,
-  config: {
-    maxConcurrency: number;
-    rateLimit: { limit: number; windowMs: number };
-    delayMs: [number, number];
-  }
-): Promise<string> {
-  const res = await fetch(`${MOCK_URL}/service/${name}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-  expect(res.status).toBe(201);
-  return name;
-}
 
 describe('TEM.detectConstraints Integration', () => {
   beforeEach(() => {
@@ -37,11 +19,12 @@ describe('TEM.detectConstraints Integration', () => {
   describe('Concurrency Detection', () => {
     it('should detect concurrency limit with 80% safety margin applied', async () => {
       // Create service with maxConcurrency: 5, high rate limit
-      await createMockService('concurrency-test', {
+      const res = await createMockService('concurrency-test', {
         maxConcurrency: 5,
         rateLimit: { limit: 1000, windowMs: 1000 }, // Very high rate limit
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/concurrency-test`,
@@ -77,11 +60,12 @@ describe('TEM.detectConstraints Integration', () => {
 
     it('should detect low concurrency limits accurately', async () => {
       // Test with very low concurrency
-      await createMockService('low-concurrency-test', {
+      const res = await createMockService('low-concurrency-test', {
         maxConcurrency: 2,
         rateLimit: { limit: 1000, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/low-concurrency-test`,
@@ -106,11 +90,12 @@ describe('TEM.detectConstraints Integration', () => {
     it('should detect high rate limits with no rate limit hits', async () => {
       // Create service with high concurrency and no practical rate limit
       // When no rate limits are hit, algorithm estimates based on throughput
-      await createMockService('no-rate-limit-test', {
+      const res = await createMockService('no-rate-limit-test', {
         maxConcurrency: 10,
         rateLimit: { limit: 1000, windowMs: 1000 }, // Very high - won't be hit
         delayMs: [5, 10], // Fast responses
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/no-rate-limit-test`,
@@ -136,11 +121,12 @@ describe('TEM.detectConstraints Integration', () => {
       // Use low rate limit so it's definitely hit during detection
       // With low concurrency (3), safe concurrency = 2
       // Rate limit 5 per 1000ms means we'll hit it quickly
-      await createMockService('moderate-rate-limit', {
+      const res = await createMockService('moderate-rate-limit', {
         maxConcurrency: 3,
         rateLimit: { limit: 5, windowMs: 1000 },
         delayMs: [5, 10],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/moderate-rate-limit`,
@@ -171,11 +157,12 @@ describe('TEM.detectConstraints Integration', () => {
       // Use values that allow clear detection
       // Low concurrency so we can detect it
       // Low rate limit so we hit it
-      await createMockService('combined-test', {
+      const res = await createMockService('combined-test', {
         maxConcurrency: 3,
         rateLimit: { limit: 6, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/combined-test`,
@@ -216,11 +203,12 @@ describe('TEM.detectConstraints Integration', () => {
 
     it('should handle strict combined constraints', async () => {
       // Strict: both low concurrency and low rate limit
-      await createMockService('strict-combined', {
+      const res = await createMockService('strict-combined', {
         maxConcurrency: 2,
         rateLimit: { limit: 4, windowMs: 1000 },
         delayMs: [10, 20],
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const result = await TEM.detectConstraints({
         url: `${MOCK_URL}/mock/strict-combined`,
@@ -286,11 +274,12 @@ describe('TEM.detectConstraints Integration', () => {
     });
 
     it('should handle very short timeout', async () => {
-      await createMockService('timeout-test', {
+      const res = await createMockService('timeout-test', {
         maxConcurrency: 5,
         rateLimit: { limit: 20, windowMs: 1000 },
         delayMs: [50, 100], // Slower responses
-      });
+      }, MOCK_URL);
+      expect(res.status).toBe(201);
 
       const startTime = Date.now();
 
@@ -331,11 +320,12 @@ describe('TEM.detectConstraints Integration', () => {
       for (const testCase of testCases) {
         const serviceName = `concurrency-accuracy-${testCase.concurrency}`;
 
-        await createMockService(serviceName, {
+        const res = await createMockService(serviceName, {
           maxConcurrency: testCase.concurrency,
           rateLimit: { limit: testCase.rateLimit, windowMs: testCase.windowMs },
           delayMs: [5, 15],
-        });
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
 
         const result = await TEM.detectConstraints({
           url: `${MOCK_URL}/mock/${serviceName}`,
@@ -376,11 +366,12 @@ describe('TEM.detectConstraints Integration', () => {
       for (const testCase of testCases) {
         const serviceName = `rate-accuracy-${testCase.rateLimit}`;
 
-        await createMockService(serviceName, {
+        const res = await createMockService(serviceName, {
           maxConcurrency: testCase.concurrency,
           rateLimit: { limit: testCase.rateLimit, windowMs: testCase.windowMs },
           delayMs: [5, 10],
-        });
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
 
         const result = await TEM.detectConstraints({
           url: `${MOCK_URL}/mock/${serviceName}`,
