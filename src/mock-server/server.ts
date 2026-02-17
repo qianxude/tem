@@ -125,3 +125,24 @@ export async function createMockService(
   });
   return res;
 }
+
+/**
+ * Helper to create error simulation config with validation.
+ * @param rate - Error rate 0-1
+ * @param statusCode - HTTP status code (default: 500)
+ * @param errorMessage - Error message
+ */
+export function createErrorSimulation(
+  rate: number,
+  statusCode?: number,
+  errorMessage?: string
+): i.ErrorSimulationConfig {
+  if (rate < 0 || rate > 1) {
+    throw new Error('Error rate must be between 0 and 1');
+  }
+  return {
+    rate,
+    statusCode,
+    errorMessage,
+  };
+}

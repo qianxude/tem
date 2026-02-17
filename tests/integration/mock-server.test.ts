@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { startMockServer, stopMockServer, getServerState } from '../../src/mock-server';
+import { startMockServer, stopMockServer, getServerState, createMockService } from '../../src/mock-server';
 
 const TEST_PORT = 19999;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
@@ -21,15 +21,11 @@ describe('mock-server', () => {
       startMockServer({ port: TEST_PORT, mode: 'multi' });
 
       // Create service
-      const createRes = await fetch(`${BASE_URL}/service/test1`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maxConcurrency: 2,
-          rateLimit: { limit: 10, windowMs: 1000 },
-          delayMs: [10, 20],
-        }),
-      });
+      const createRes = await createMockService('test1', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        delayMs: [10, 20],
+      }, BASE_URL);
 
       expect(createRes.status).toBe(201);
       const createData = await createRes.json();
@@ -80,14 +76,10 @@ describe('mock-server', () => {
       startMockServer({ port: TEST_PORT, mode: 'multi' });
 
       // Create service
-      await fetch(`${BASE_URL}/service/todelete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maxConcurrency: 2,
-          rateLimit: { limit: 10, windowMs: 1000 },
-        }),
-      });
+      await createMockService('todelete', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+      }, BASE_URL);
 
       // Delete service
       const deleteRes = await fetch(`${BASE_URL}/service/todelete`, {
@@ -109,15 +101,11 @@ describe('mock-server', () => {
       });
 
       // Create service with concurrency=1 and longer delay
-      await fetch(`${BASE_URL}/service/lowconcurrency`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maxConcurrency: 1,
-          rateLimit: { limit: 100, windowMs: 1000 },
-          delayMs: [100, 100],
-        }),
-      });
+      await createMockService('lowconcurrency', {
+        maxConcurrency: 1,
+        rateLimit: { limit: 100, windowMs: 1000 },
+        delayMs: [100, 100],
+      }, BASE_URL);
 
       // Start first request (holds the slot for 100ms)
       const req1 = fetch(`${BASE_URL}/mock/lowconcurrency`);
@@ -143,15 +131,11 @@ describe('mock-server', () => {
       });
 
       // Create service with rate limit of 2 per 1000ms
-      await fetch(`${BASE_URL}/service/ratelimited`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maxConcurrency: 10,
-          rateLimit: { limit: 2, windowMs: 1000 },
-          delayMs: [1, 1],
-        }),
-      });
+      await createMockService('ratelimited', {
+        maxConcurrency: 10,
+        rateLimit: { limit: 2, windowMs: 1000 },
+        delayMs: [1, 1],
+      }, BASE_URL);
 
       // First two requests should succeed
       const res1 = await fetch(`${BASE_URL}/mock/ratelimited`);
@@ -165,6 +149,82 @@ describe('mock-server', () => {
       expect(res3.status).toBe(429);
       const data3 = await res3.json();
       expect(data3.error).toBe('rate_limit_exceeded');
+    });
+
+    it('should return 400 for invalid errorSimulation rate (negative)', async () => {
+      startMockServer({ port: TEST_PORT, mode: 'multi' });
+
+      const res = await createMockService('bad', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        errorSimulation: { rate: -0.1 },
+      }, BASE_URL);
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('invalid_params');
+    });
+
+    it('should return 400 for invalid errorSimulation rate (> 1)', async () => {
+      startMockServer({ port: TEST_PORT, mode: 'multi' });
+
+      const res = await createMockService('bad', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        errorSimulation: { rate: 1.5 },
+      }, BASE_URL);
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('invalid_params');
+    });
+
+    it('should simulate errors at 100% rate with default message', async () => {
+      startMockServer({ port: TEST_PORT, mode: 'multi' });
+
+      await createMockService('err', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        errorSimulation: { rate: 1 },
+      }, BASE_URL);
+
+      const res = await fetch(`${BASE_URL}/mock/err`);
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe('internal_server_error');
+    });
+
+    it('should simulate errors with custom message', async () => {
+      startMockServer({ port: TEST_PORT, mode: 'multi' });
+
+      await createMockService('err', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        errorSimulation: { rate: 1, errorMessage: 'custom_error' },
+      }, BASE_URL);
+
+      const res = await fetch(`${BASE_URL}/mock/err`);
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe('custom_error');
+    });
+
+    it('should not simulate errors at 0% rate', async () => {
+      startMockServer({ port: TEST_PORT, mode: 'multi' });
+
+      await createMockService('err', {
+        maxConcurrency: 2,
+        rateLimit: { limit: 10, windowMs: 1000 },
+        errorSimulation: { rate: 0 },
+      }, BASE_URL);
+
+      const res = await fetch(`${BASE_URL}/mock/err`);
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.data).toBe('ok');
     });
   });
 
@@ -212,6 +272,24 @@ describe('mock-server', () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toBe('single_mode_no_create');
+    });
+
+    it('should work with errorSimulation in single mode', async () => {
+      startMockServer({
+        port: TEST_PORT,
+        mode: 'single',
+        defaultService: {
+          maxConcurrency: 3,
+          rateLimit: { limit: 10, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: { rate: 1 },
+        },
+      });
+
+      const res = await fetch(`${BASE_URL}/`);
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe('internal_server_error');
     });
   });
 

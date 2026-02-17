@@ -8,10 +8,17 @@ export interface RateLimitConfig {
   windowMs: number;
 }
 
+export interface ErrorSimulationConfig {
+  rate: number;        // Error rate 0-1 (e.g., 0.1 = 10% error rate)
+  statusCode?: number; // HTTP status code to return (default: 500)
+  errorMessage?: string; // Error message (default: "internal_server_error")
+}
+
 export interface ServiceConfig {
   maxConcurrency: number;
   rateLimit: RateLimitConfig;
   delayMs: [number, number];  // [min, max]
+  errorSimulation?: ErrorSimulationConfig;  // Optional error simulation
 }
 
 export interface ServerConfig {
@@ -24,6 +31,7 @@ export interface CreateServiceRequest {
   maxConcurrency: number;
   rateLimit: RateLimitConfig;
   delayMs?: [number, number];  // [min, max], defaults to [10, 200]
+  errorSimulation?: ErrorSimulationConfig;  // Optional error simulation
 }
 
 export interface ServiceResponse {

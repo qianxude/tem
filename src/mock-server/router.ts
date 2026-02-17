@@ -21,6 +21,7 @@ const errors = {
   rateLimitExceeded: () => jsonResponse({ error: 'rate_limit_exceeded' }, 429),
   invalidParams: () => jsonResponse({ error: 'invalid_params' }, 400),
   singleModeNoCreate: () => jsonResponse({ error: 'single_mode_no_create' }, 400),
+  serviceError: (message: string) => jsonResponse({ error: message }, 500),
 };
 
 // Parse request body safely
@@ -59,10 +60,34 @@ function validateServiceConfig(body: unknown): i.ServiceConfig | null {
 
   if (delayMs[0] < 0 || delayMs[1] < delayMs[0]) return null;
 
+  // Optional: errorSimulation config
+  let errorSimulation: i.ErrorSimulationConfig | undefined;
+  if (b.errorSimulation && typeof b.errorSimulation === 'object') {
+    const es = b.errorSimulation as Record<string, unknown>;
+
+    // Validate rate (required, 0-1)
+    if (typeof es.rate !== 'number' || es.rate < 0 || es.rate > 1) {
+      return null;
+    }
+
+    errorSimulation = { rate: es.rate };
+
+    // Optional statusCode
+    if (typeof es.statusCode === 'number') {
+      errorSimulation.statusCode = es.statusCode;
+    }
+
+    // Optional errorMessage
+    if (typeof es.errorMessage === 'string') {
+      errorSimulation.errorMessage = es.errorMessage;
+    }
+  }
+
   return {
     maxConcurrency: b.maxConcurrency,
     rateLimit: { limit: rl.limit, windowMs: rl.windowMs },
     delayMs,
+    errorSimulation,
   };
 }
 
@@ -166,6 +191,12 @@ export function createRouter(state: RouterState) {
 // Handle mock service request
 async function handleMockRequest(service: MockService): Promise<Response> {
   const startTime = Date.now();
+
+  // Check for random service error (before acquiring resources)
+  const randomError = service.checkRandomError();
+  if (randomError) {
+    return errors.serviceError(randomError.errorMessage);
+  }
 
   // Try to acquire (non-blocking)
   const acquireResult = service.tryAcquire();

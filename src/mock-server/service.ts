@@ -99,4 +99,24 @@ export class MockService {
   getCurrentConcurrency(): number {
     return this.currentConcurrency;
   }
+
+  /**
+   * Check if a random service error should be simulated.
+   * Returns the error config if error should occur, null otherwise.
+   */
+  checkRandomError(): { statusCode: number; errorMessage: string } | null {
+    const errorConfig = this.config.errorSimulation;
+    if (!errorConfig || errorConfig.rate <= 0) {
+      return null;
+    }
+
+    if (Math.random() < errorConfig.rate) {
+      return {
+        statusCode: errorConfig.statusCode ?? 500,
+        errorMessage: errorConfig.errorMessage ?? 'internal_server_error',
+      };
+    }
+
+    return null;
+  }
 }
