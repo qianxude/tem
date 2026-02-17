@@ -132,7 +132,8 @@ export function createRouter(state: RouterState) {
     }
 
     // GET /mock/:name - Access mock service (multi mode)
-    if (method === 'GET' && pathname.startsWith('/mock/')) {
+    // POST /mock/:name - Also supported (body ignored for mock)
+    if ((method === 'GET' || method === 'POST') && pathname.startsWith('/mock/')) {
       if (mode === 'single') {
         return errors.invalidParams();
       }
@@ -147,7 +148,8 @@ export function createRouter(state: RouterState) {
     }
 
     // GET / - Access default service (single mode)
-    if (method === 'GET' && pathname === '/') {
+    // POST / - Also supported (body ignored for mock)
+    if ((method === 'GET' || method === 'POST') && pathname === '/') {
       const defaultService = state.getDefaultService();
       if (mode !== 'single' || !defaultService) {
         return errors.invalidParams();

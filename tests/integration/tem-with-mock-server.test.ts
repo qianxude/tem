@@ -7,6 +7,7 @@ import { NonRetryableError } from '../../src/core/worker.js';
 import { startMockServer, stopMockServer } from '../../src/mock-server/index.js';
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
+import { waitForBatch } from '../../src/utils/index.js';
 
 const TEST_PORT = 19998;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
@@ -42,23 +43,6 @@ async function createMockService(
   });
   expect(res.status).toBe(201);
   return name;
-}
-
-// Helper to wait for batch completion
-async function waitForBatch(
-  tem: TEM,
-  batchId: string,
-  timeoutMs: number = 30000
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const stats = await tem.batch.getStats(batchId);
-    if (stats.pending === 0 && stats.running === 0) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error('Batch completion timeout');
 }
 
 describe('TEM with Mock Server Integration', () => {
@@ -176,7 +160,7 @@ describe('TEM with Mock Server Integration', () => {
 
       // Start worker and wait for completion
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 5000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 5000 });
 
       // Verify all tasks completed
       const finalStats = await tem.batch.getStats(batch.id);
@@ -266,7 +250,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 5000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 5000 });
 
       const stats = await tem.batch.getStats(batch.id);
       expect(stats.completed).toBe(2);
@@ -342,7 +326,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 30000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 30000 });
 
       const finalStats = await tem.batch.getStats(batch.id);
 
@@ -416,7 +400,7 @@ describe('TEM with Mock Server Integration', () => {
 
       const startTime = Date.now();
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 30000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 30000 });
       const totalTime = Date.now() - startTime;
 
       const stats = await tem.batch.getStats(batch.id);
@@ -501,7 +485,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 15000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 15000 });
 
       const stats = await tem.batch.getStats(batch.id);
 
@@ -588,7 +572,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 20000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 20000 });
 
       const stats = await tem.batch.getStats(batch.id);
       expect(stats.completed).toBe(8);
@@ -707,7 +691,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 20000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 20000 });
 
       const finalStats = await tem.batch.getStats(batch.id);
 
@@ -811,7 +795,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 10000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 10000 });
 
       const stats = await tem.batch.getStats(batch.id);
 
@@ -900,7 +884,7 @@ describe('TEM with Mock Server Integration', () => {
 
       const startTime = Date.now();
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 60000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 60000 });
       const totalTime = Date.now() - startTime;
 
       const stats = await tem.batch.getStats(batch.id);
@@ -983,7 +967,7 @@ describe('TEM with Mock Server Integration', () => {
       );
 
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 30000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 30000 });
 
       const stats = await tem.batch.getStats(batch.id);
       expect(stats.completed).toBe(taskCount);
@@ -1122,7 +1106,7 @@ describe('TEM with Mock Server Integration', () => {
 
       const startTime = Date.now();
       tem.worker.start();
-      await waitForBatch(tem, batch.id, 60000);
+      await waitForBatch(tem, batch.id, { timeoutMs: 60000 });
       const totalTime = Date.now() - startTime;
 
       const stats = await tem.batch.getStats(batch.id);
