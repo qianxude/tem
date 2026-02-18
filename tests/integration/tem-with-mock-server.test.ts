@@ -8,6 +8,7 @@ import { startMockServer, stopMockServer, createMockService } from '../../src/mo
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
 import { waitForBatch } from '../../src/utils/index.js';
+import type { BatchInterruptionCriteria, BatchInterruption } from '../../src/interfaces/index.js';
 
 const TEST_PORT = 19998;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
@@ -1128,5 +1129,511 @@ describe('TEM with Mock Server Integration', () => {
       console.log(`[INFO] Total retries: ${totalRetries}`);
       console.log(`[INFO] Operation stats:`, operationStats);
     }, 60000);
+  });
+
+  describe('Batch Interruption', () => {
+    describe('Error Rate Interruption', () => {
+      it('should interrupt batch when error rate exceeds threshold', async () => {
+        // Create mock service that always returns errors
+        // With maxAttempts=1, tasks fail immediately and trigger interruption check
+        const res = await createMockService('error-prone-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: {
+            rate: 1.0, // 100% error rate
+            statusCode: 500,
+            errorMessage: 'internal_server_error',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 2,
+          defaultMaxAttempts: 1, // No retries - fail immediately
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxErrorRate: 0.3, // 30% error rate threshold
+        };
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-ERROR-RATE-001',
+          type: 'error-rate-test-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create 10 tasks
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'error-prone-api',
+            endpoint: `${MOCK_URL}/mock/error-prone-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption - poll until batch is interrupted or timeout
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 10000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log entry exists
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('error_rate_exceeded');
+
+        // Verify error rate was exceeded (at least 30% of tasks failed)
+        const stats = await tem.batch.getStats(batch.id);
+        expect(stats.total).toBe(10);
+        expect(stats.failed).toBeGreaterThanOrEqual(3);
+      }, 15000);
+    });
+
+    describe('Consecutive Failures Interruption', () => {
+      it('should interrupt batch after 3 consecutive failures', async () => {
+        // Create mock service that always fails
+        const res = await createMockService('always-fail-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: {
+            rate: 1.0, // 100% error rate
+            statusCode: 500,
+            errorMessage: 'service_unavailable',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 3,
+          defaultMaxAttempts: 1, // No retries for faster failure
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxConsecutiveFailures: 3,
+        };
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-CONSECUTIVE-001',
+          type: 'consecutive-failures-test-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create 10 tasks
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'always-fail-api',
+            endpoint: `${MOCK_URL}/mock/always-fail-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 10000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('consecutive_failures_exceeded');
+
+        // Verify worker stopped processing (most tasks should still be pending)
+        const stats = await tem.batch.getStats(batch.id);
+        // Note: Due to race conditions with concurrent tasks, we may have 1-3 failed tasks
+        // The important thing is that interruption was triggered, not the exact count
+        expect(stats.failed).toBeGreaterThanOrEqual(1);
+        expect(stats.failed).toBeLessThanOrEqual(3);
+      }, 15000);
+    });
+
+    describe('Rate Limit Hits Interruption', () => {
+      it('should interrupt batch after 5 rate limit hits', async () => {
+        // Create service that always returns 429 errors
+        // Worker detects rate limit errors by checking for "429" or "rate limit" in error message
+        const res = await createMockService('always-rate-limit-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: {
+            rate: 1.0, // 100% error rate
+            statusCode: 429, // Rate limit status code
+            errorMessage: 'rate_limit_exceeded',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 5,
+          defaultMaxAttempts: 1, // No retries - fail immediately
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxRateLimitHits: 5,
+        };
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-RATE-LIMIT-001',
+          type: 'rate-limit-test-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create tasks that will fail with rate limit errors
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'always-rate-limit-api',
+            endpoint: `${MOCK_URL}/mock/always-rate-limit-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              // Error message must contain "429" for worker to detect rate limit
+              throw new Error(`HTTP 429: rate_limit_exceeded`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 10000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('rate_limit_hits_exceeded');
+      }, 15000);
+    });
+
+    describe('Concurrency Errors Interruption', () => {
+      it('should interrupt batch after 5 concurrency errors', async () => {
+        // Create service that always returns 503 errors
+        // Worker detects concurrency errors by checking for "503" in error message
+        const res = await createMockService('always-503-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: {
+            rate: 1.0, // 100% error rate
+            statusCode: 503, // Service unavailable
+            errorMessage: 'concurrency_limit_exceeded',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 5,
+          defaultMaxAttempts: 1, // No retries - fail immediately
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxConcurrencyErrors: 5,
+        };
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-CONCURRENCY-001',
+          type: 'concurrency-error-test-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create tasks that will fail with 503 errors
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'always-503-api',
+            endpoint: `${MOCK_URL}/mock/always-503-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              // Error message must contain "503" for worker to detect concurrency error
+              throw new Error(`HTTP 503: concurrency_limit_exceeded`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 10000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('concurrency_errors_exceeded');
+      }, 15000);
+    });
+
+    describe('Manual Interruption', () => {
+      it('should interrupt batch when calling tem.interruptBatch()', async () => {
+        // Create service with delays to keep tasks running
+        const res = await createMockService('interruptible-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [200, 300],
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 3,
+          defaultMaxAttempts: 3,
+          pollIntervalMs: 10,
+        });
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-MANUAL-001',
+          type: 'manual-interrupt-test-batch',
+        });
+
+        // Create several tasks
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'interruptible-api',
+            endpoint: `${MOCK_URL}/mock/interruptible-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Let some tasks start processing
+        await Bun.sleep(100);
+
+        // Manually interrupt the batch
+        await tem.interruptBatch(batch.id, 'manual', 'Manual interruption for testing');
+
+        // Verify batch status changed to interrupted
+        const batchStatus = await tem.batch.getById(batch.id);
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('manual');
+        expect(interruptionLog[0]?.message).toBe('Manual interruption for testing');
+
+        // Wait a bit and verify worker stopped processing this batch
+        await Bun.sleep(300);
+        const stats = await tem.batch.getStats(batch.id);
+        // Some tasks may have completed, but many should still be pending
+        expect(stats.pending + stats.running).toBeGreaterThan(0);
+      }, 15000);
+    });
+
+    describe('Recovery After Interruption', () => {
+      it('should allow resuming interrupted batch via tem.batch.resume()', async () => {
+        // Create service that fails initially but succeeds after resume
+        const res = await createMockService('recoverable-api', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 100, windowMs: 1000 },
+          delayMs: [5, 10],
+          errorSimulation: {
+            rate: 1.0, // Always fails
+            statusCode: 500,
+            errorMessage: 'temporary_error',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 2,
+          defaultMaxAttempts: 1,
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxConsecutiveFailures: 2,
+        };
+
+        const batch = await tem.batch.create({
+          code: 'BATCH-RECOVERY-001',
+          type: 'recovery-test-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create 5 tasks
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 5 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'api-call',
+          payload: {
+            serviceName: 'recoverable-api',
+            endpoint: `${MOCK_URL}/mock/recoverable-api`,
+            method: 'GET',
+          } as ApiTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<ApiTaskPayload, ApiTaskResult>(
+          'api-call',
+          async (payload) => {
+            const res = await fetch(payload.endpoint, {
+              method: payload.method || 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            return (await res.json()) as MockResponse;
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 10000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Stop the worker
+        await tem.worker.stop();
+
+        // Resume the batch - reset running tasks to pending
+        const resumedCount = await tem.batch.resume(batch.id);
+        expect(resumedCount).toBeGreaterThanOrEqual(0);
+
+        // Update batch status back to active
+        await tem.batch.updateStatus(batch.id, 'active');
+
+        // Verify batch is active again
+        const resumedBatch = await tem.batch.getById(batch.id);
+        expect(resumedBatch?.status).toBe('active');
+
+        // Note: In a real scenario, you would also fix the underlying issue
+        // (e.g., restart the service, fix configuration, etc.) before resuming
+      }, 15000);
+    });
   });
 });

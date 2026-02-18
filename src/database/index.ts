@@ -33,13 +33,20 @@ export class Database implements i.DatabaseConnection {
       )
     `);
 
-    // Check if initial schema needs to be applied
-    const migrationCount = this.db
-      .query('SELECT COUNT(*) as count FROM _migration WHERE name = $name')
-      .get({ $name: '001_initial_schema' }) as { count: number };
+    // Check and apply migrations in order
+    const migrations = [
+      { name: '001_initial_schema', apply: () => this.applyInitialSchema() },
+      { name: '002_batch_interruption', apply: () => this.applyBatchInterruptionMigration() },
+    ];
 
-    if (migrationCount.count === 0) {
-      this.applyInitialSchema();
+    for (const migration of migrations) {
+      const migrationCount = this.db
+        .query('SELECT COUNT(*) as count FROM _migration WHERE name = $name')
+        .get({ $name: migration.name }) as { count: number };
+
+      if (migrationCount.count === 0) {
+        migration.apply();
+      }
     }
   }
 
@@ -87,6 +94,39 @@ export class Database implements i.DatabaseConnection {
       this.db
         .query('INSERT INTO _migration (name) VALUES ($name)')
         .run({ $name: '001_initial_schema' });
+    });
+  }
+
+  private applyBatchInterruptionMigration(): void {
+    const migration = `
+      -- Add status to batch table
+      ALTER TABLE batch ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'interrupted', 'completed'));
+
+      -- Add interruption criteria storage (JSON)
+      ALTER TABLE batch ADD COLUMN interruption_criteria TEXT;
+
+      -- Index for quickly finding active batches
+      CREATE INDEX IF NOT EXISTS idx_batch_status ON batch(status);
+
+      -- New table: interruption log
+      CREATE TABLE IF NOT EXISTS batch_interrupt_log (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        message TEXT NOT NULL,
+        stats_snapshot TEXT NOT NULL, -- JSON of BatchStats
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interrupt_log_batch_id ON batch_interrupt_log(batch_id);
+    `;
+
+    this.transaction(() => {
+      this.db.exec(migration);
+      this.db
+        .query('INSERT INTO _migration (name) VALUES ($name)')
+        .run({ $name: '002_batch_interruption' });
     });
   }
 

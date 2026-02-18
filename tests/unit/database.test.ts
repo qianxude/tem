@@ -48,7 +48,7 @@ describe('Database', () => {
 
     it('should track migrations', () => {
       const migrations = db.query('SELECT * FROM _migration');
-      expect(migrations.length).toBe(1);
+      expect(migrations.length).toBe(2);
     });
   });
 

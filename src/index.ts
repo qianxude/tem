@@ -1,7 +1,7 @@
 // Main exports for TEM framework
 export * as interfaces from './interfaces/index.js';
 export { Database, type DatabaseOptions } from './database/index.js';
-export { BatchService, TaskService } from './services/index.js';
+export { BatchService, TaskService, BatchInterruptionService } from './services/index.js';
 export {
   ConcurrencyController,
   RateLimiter,

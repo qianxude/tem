@@ -8,6 +8,7 @@ import { startMockServer, stopMockServer, createMockService } from '../../src/mo
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
 import { waitForBatch } from '../../src/utils/index.js';
+import type { BatchInterruptionCriteria } from '../../src/interfaces/index.js';
 
 const TEST_PORT = 19997;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
@@ -28,7 +29,7 @@ const MID_TIER_CONFIG = {
 
 // LLM Task types
 interface LLMTaskPayload {
-  provider: 'provider-a' | 'provider-b';
+  provider: string;
   model: string;
   prompt: string;
   maxTokens?: number;
@@ -870,5 +871,368 @@ describe('TEM with LLM Provider Simulation', () => {
       }
       console.log('================================');
     }, 120000);
+  });
+
+  describe('LLM Provider Interruption', () => {
+    describe('Error Rate Interruption with LLM Provider', () => {
+      it('should interrupt batch when LLM provider has high failure rate', async () => {
+        // Create mock LLM provider with high failure rate (simulating provider issues)
+        const res = await createMockService('unstable-llm-provider', {
+          maxConcurrency: 5,
+          rateLimit: { limit: 50, windowMs: 10000 },
+          delayMs: [50, 100],
+          errorSimulation: {
+            rate: 0.6, // 60% error rate - simulating unstable provider
+            statusCode: 500,
+            errorMessage: 'llm_provider_error',
+          },
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 5,
+          defaultMaxAttempts: 2,
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxErrorRate: 0.2, // 20% error rate threshold - strict to catch issues early
+        };
+
+        const batch = await tem.batch.create({
+          code: 'LLM-ERROR-RATE-001',
+          type: 'llm-error-rate-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create LLM tasks
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'llm-request',
+          payload: {
+            provider: 'unstable-provider',
+            model: 'gpt-4o',
+            prompt: `Generate text for task ${i}`,
+            maxTokens: 150,
+          } as LLMTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        tem.worker.register<LLMTaskPayload, LLMTaskResult>(
+          'llm-request',
+          async () => {
+            const res = await fetch(`${MOCK_URL}/mock/unstable-llm-provider`, {
+              method: 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = (await res.json()) as MockResponse;
+            return {
+              requestId: data.requestId,
+              generated: data.data,
+              tokensUsed: Math.floor(Math.random() * 100) + 50,
+              latencyMs: data.meta.rt,
+            };
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 15000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted due to error rate
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('error_rate_exceeded');
+
+        console.log('[LLM Provider Interruption] Error rate exceeded test passed');
+        console.log(`  Interruption reason: ${interruptionLog[0]?.reason}`);
+        console.log(`  Message: ${interruptionLog[0]?.message}`);
+      }, 20000);
+    });
+
+    describe('Rate Limit Interruption', () => {
+      it('should interrupt batch when aggressively rate limited by provider', async () => {
+        // Create mock LLM provider with aggressive rate limiting
+        const res = await createMockService('rate-limited-llm-provider', {
+          maxConcurrency: 10,
+          rateLimit: { limit: 2, windowMs: 10000 }, // Very strict: 2 requests per 10 seconds
+          delayMs: [50, 100],
+        }, MOCK_URL);
+        expect(res.status).toBe(201);
+
+        tem = new TEM({
+          databasePath: dbPath,
+          concurrency: 8, // Much higher than provider allows
+          defaultMaxAttempts: 3,
+          pollIntervalMs: 10,
+        });
+
+        const criteria: BatchInterruptionCriteria = {
+          maxRateLimitHits: 10,
+        };
+
+        const batch = await tem.batch.create({
+          code: 'LLM-RATE-LIMIT-001',
+          type: 'llm-rate-limit-batch',
+          interruptionCriteria: criteria,
+        });
+
+        // Create many tasks to trigger rate limits
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 20 }, (_, i) => ({
+          batchId: batch.id,
+          type: 'llm-request',
+          payload: {
+            provider: 'rate-limited-provider',
+            model: 'claude-3-haiku',
+            prompt: `Process task ${i}`,
+            maxTokens: 100,
+          } as LLMTaskPayload,
+        }));
+
+        await tem.task.createMany(taskInputs);
+
+        let rateLimitHits = 0;
+
+        tem.worker.register<LLMTaskPayload, LLMTaskResult>(
+          'llm-request',
+          async (payload, context) => {
+            const res = await fetch(`${MOCK_URL}/mock/rate-limited-llm-provider`, {
+              method: 'GET',
+            });
+
+            if (res.status === 429) {
+              rateLimitHits++;
+              throw new Error('rate_limit_exceeded');
+            }
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = (await res.json()) as MockResponse;
+            return {
+              requestId: data.requestId,
+              generated: data.data,
+              tokensUsed: Math.floor(Math.random() * 50) + 25,
+              latencyMs: data.meta.rt,
+            };
+          }
+        );
+
+        tem.worker.start();
+
+        // Wait for interruption
+        const startTime = Date.now();
+        let batchStatus = await tem.batch.getById(batch.id);
+        while (batchStatus?.status !== 'interrupted' && Date.now() - startTime < 20000) {
+          await Bun.sleep(100);
+          batchStatus = await tem.batch.getById(batch.id);
+        }
+
+        // Verify batch was interrupted
+        expect(batchStatus?.status).toBe('interrupted');
+
+        // Verify interruption log
+        const interruptionLog = await tem.interruption.getInterruptionLog(batch.id);
+        expect(interruptionLog.length).toBeGreaterThan(0);
+        expect(interruptionLog[0]?.reason).toBe('rate_limit_hits_exceeded');
+
+        console.log('[LLM Provider Interruption] Rate limit exceeded test passed');
+        console.log(`  Total rate limit hits: ${rateLimitHits}`);
+        console.log(`  Interruption message: ${interruptionLog[0]?.message}`);
+      }, 30000);
+    });
+
+    describe('Multiple Providers with Different Criteria', () => {
+      it('should handle two batches with different interruption criteria', async () => {
+        // Provider A: Strict limits
+        const res1 = await createMockService('strict-llm-provider', {
+          maxConcurrency: 2,
+          rateLimit: { limit: 5, windowMs: 5000 },
+          delayMs: [30, 60],
+          errorSimulation: {
+            rate: 0.3, // 30% error rate
+            statusCode: 500,
+            errorMessage: 'provider_a_error',
+          },
+        }, MOCK_URL);
+        expect(res1.status).toBe(201);
+
+        // Provider B: More lenient
+        const res2 = await createMockService('lenient-llm-provider', {
+          maxConcurrency: 5,
+          rateLimit: { limit: 20, windowMs: 5000 },
+          delayMs: [20, 40],
+        }, MOCK_URL);
+        expect(res2.status).toBe(201);
+
+        // Create temp directories for both databases
+        const dbPathStrict = join(tempDir, 'test-strict.db');
+        const dbPathLenient = join(tempDir, 'test-lenient.db');
+
+        // Provider A TEM - strict interruption criteria
+        const temStrict = new TEM({
+          databasePath: dbPathStrict,
+          concurrency: 3,
+          defaultMaxAttempts: 2,
+          pollIntervalMs: 10,
+        });
+
+        // Provider B TEM - lenient interruption criteria
+        const temLenient = new TEM({
+          databasePath: dbPathLenient,
+          concurrency: 5,
+          defaultMaxAttempts: 3,
+          pollIntervalMs: 10,
+        });
+
+        // Use the main tem reference for cleanup
+        tem = temStrict;
+
+        // Batch A: Strict criteria (interrupts early)
+        const strictCriteria: BatchInterruptionCriteria = {
+          maxErrorRate: 0.25, // 25% threshold - will trigger with 30% error rate
+          maxConsecutiveFailures: 2,
+        };
+
+        const batchStrict = await temStrict.batch.create({
+          code: 'LLM-MULTI-STRICT-001',
+          type: 'llm-strict-batch',
+          interruptionCriteria: strictCriteria,
+        });
+
+        // Batch B: Lenient criteria (allows more errors)
+        const lenientCriteria: BatchInterruptionCriteria = {
+          maxErrorRate: 0.5, // 50% threshold - won't trigger
+          maxFailedTasks: 20, // High threshold
+        };
+
+        const batchLenient = await temLenient.batch.create({
+          code: 'LLM-MULTI-LENIENT-001',
+          type: 'llm-lenient-batch',
+          interruptionCriteria: lenientCriteria,
+        });
+
+        // Create tasks for both batches
+        const tasksStrict: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batchStrict.id,
+          type: 'llm-request-strict',
+          payload: {
+            provider: 'strict-provider',
+            model: 'gpt-4o-mini',
+            prompt: `Strict batch task ${i}`,
+            maxTokens: 100,
+          } as LLMTaskPayload,
+        }));
+
+        const tasksLenient: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+          batchId: batchLenient.id,
+          type: 'llm-request-lenient',
+          payload: {
+            provider: 'lenient-provider',
+            model: 'gpt-4o',
+            prompt: `Lenient batch task ${i}`,
+            maxTokens: 100,
+          } as LLMTaskPayload,
+        }));
+
+        await temStrict.task.createMany(tasksStrict);
+        await temLenient.task.createMany(tasksLenient);
+
+        // Register handlers
+        temStrict.worker.register<LLMTaskPayload, LLMTaskResult>(
+          'llm-request-strict',
+          async () => {
+            const res = await fetch(`${MOCK_URL}/mock/strict-llm-provider`, {
+              method: 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = (await res.json()) as MockResponse;
+            return {
+              requestId: data.requestId,
+              generated: data.data,
+              tokensUsed: 100,
+              latencyMs: data.meta.rt,
+            };
+          }
+        );
+
+        temLenient.worker.register<LLMTaskPayload, LLMTaskResult>(
+          'llm-request-lenient',
+          async () => {
+            const res = await fetch(`${MOCK_URL}/mock/lenient-llm-provider`, {
+              method: 'GET',
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = (await res.json()) as MockResponse;
+            return {
+              requestId: data.requestId,
+              generated: data.data,
+              tokensUsed: 100,
+              latencyMs: data.meta.rt,
+            };
+          }
+        );
+
+        // Start both workers
+        temStrict.worker.start();
+        temLenient.worker.start();
+
+        // Wait for strict batch to be interrupted
+        const startTime = Date.now();
+        let strictStatus = await temStrict.batch.getById(batchStrict.id);
+        while (strictStatus?.status !== 'interrupted' && Date.now() - startTime < 15000) {
+          await Bun.sleep(100);
+          strictStatus = await temStrict.batch.getById(batchStrict.id);
+        }
+
+        // Strict batch should be interrupted
+        expect(strictStatus?.status).toBe('interrupted');
+
+        // Wait for lenient batch to complete
+        await waitForBatch(temLenient, batchLenient.id, { timeoutMs: 30000 });
+
+        // Lenient batch should complete successfully
+        const lenientStats = await temLenient.batch.getStats(batchLenient.id);
+        expect(lenientStats.completed).toBe(10);
+        expect(lenientStats.failed).toBe(0);
+
+        // Stop both TEMs
+        await temStrict.stop();
+        await temLenient.stop();
+
+        // Verify interruption log for strict batch
+        const strictInterruptionLog = await temStrict.interruption.getInterruptionLog(batchStrict.id);
+        expect(strictInterruptionLog.length).toBeGreaterThan(0);
+
+        console.log('[Multiple Providers] Test passed');
+        console.log(`  Strict batch status: ${strictStatus?.status}`);
+        console.log(`  Strict batch interruption: ${strictInterruptionLog[0]?.reason}`);
+        console.log(`  Lenient batch completed: ${lenientStats.completed}/${lenientStats.total}`);
+      }, 45000);
+    });
   });
 });

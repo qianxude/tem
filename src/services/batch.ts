@@ -5,9 +5,11 @@ export interface BatchRow {
   id: string;
   code: string;
   type: string;
+  status: i.BatchStatus;
   created_at: string;
   completed_at: string | null;
   metadata: string | null;
+  interruption_criteria: string | null;
 }
 
 function rowToBatch(row: BatchRow): i.Batch {
@@ -15,9 +17,13 @@ function rowToBatch(row: BatchRow): i.Batch {
     id: row.id,
     code: row.code,
     type: row.type,
+    status: row.status ?? 'active',
     createdAt: new Date(row.created_at),
     completedAt: row.completed_at ? new Date(row.completed_at) : null,
     metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : null,
+    interruptionCriteria: row.interruption_criteria
+      ? (JSON.parse(row.interruption_criteria) as i.BatchInterruptionCriteria)
+      : null,
   };
 }
 
@@ -29,9 +35,16 @@ export class BatchService implements i.BatchService {
     const now = new Date().toISOString();
 
     this.db.run(
-      `INSERT INTO batch (id, code, type, created_at, metadata)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, input.code, input.type, now, input.metadata ? JSON.stringify(input.metadata) : null]
+      `INSERT INTO batch (id, code, type, created_at, metadata, interruption_criteria)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.code,
+        input.type,
+        now,
+        input.metadata ? JSON.stringify(input.metadata) : null,
+        input.interruptionCriteria ? JSON.stringify(input.interruptionCriteria) : null,
+      ]
     );
 
     const rows = this.db.query<BatchRow>('SELECT * FROM batch WHERE id = ?', [id]);
@@ -60,7 +73,7 @@ export class BatchService implements i.BatchService {
   async complete(id: string): Promise<void> {
     const now = new Date().toISOString();
     this.db.run(
-      `UPDATE batch SET completed_at = ? WHERE id = ?`,
+      `UPDATE batch SET completed_at = ?, status = 'completed' WHERE id = ?`,
       [now, id]
     );
   }
@@ -117,5 +130,20 @@ export class BatchService implements i.BatchService {
       [id]
     );
     return result.changes ?? 0;
+  }
+
+  async updateStatus(id: string, status: i.BatchStatus): Promise<void> {
+    this.db.run(
+      `UPDATE batch SET status = ? WHERE id = ?`,
+      [status, id]
+    );
+  }
+
+  async getWithCriteria(id: string): Promise<{ batch: i.Batch; criteria: i.BatchInterruptionCriteria | null }> {
+    const batch = await this.getById(id);
+    if (!batch) {
+      throw new Error(`Batch not found: ${id}`);
+    }
+    return { batch, criteria: batch.interruptionCriteria };
   }
 }

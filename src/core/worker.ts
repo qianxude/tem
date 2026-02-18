@@ -1,5 +1,5 @@
 import * as i from '../interfaces/index.js';
-import { TaskService } from '../services/task.js';
+import { TaskService, BatchInterruptionService } from '../services/index.js';
 import { ConcurrencyController, RateLimiter, type RateLimitConfig } from '../utils/index.js';
 
 /**
@@ -18,6 +18,10 @@ export interface WorkerConfig {
   concurrency: number;
   pollIntervalMs: number;
   rateLimit?: RateLimitConfig;
+  /** Specific batch ID to process (optional - if set, only processes this batch) */
+  batchId?: string;
+  /** Interruption service for checking batch status */
+  interruptionService?: BatchInterruptionService;
 }
 
 export class Worker {
@@ -28,6 +32,13 @@ export class Worker {
   private pollIntervalMs: number;
   private abortController: AbortController;
   private inFlightTasks: Set<Promise<void>> = new Set();
+  private batchId?: string;
+  private interruptionService?: BatchInterruptionService;
+
+  // Track failure context for interruption decisions
+  private consecutiveFailures = 0;
+  private rateLimitHits = 0;
+  private concurrencyErrors = 0;
 
   constructor(
     private taskService: TaskService,
@@ -36,6 +47,8 @@ export class Worker {
     this.concurrency = new ConcurrencyController(config.concurrency);
     this.pollIntervalMs = config.pollIntervalMs;
     this.abortController = new AbortController();
+    this.batchId = config.batchId;
+    this.interruptionService = config.interruptionService;
 
     if (config.rateLimit) {
       this.rateLimiter = new RateLimiter(config.rateLimit);
@@ -93,8 +106,18 @@ export class Worker {
           break;
         }
 
+        // For batch-specific workers: check batch is still active
+        if (this.batchId && this.interruptionService) {
+          const isActive = await this.interruptionService.isBatchActive(this.batchId);
+          if (!isActive) {
+            this.concurrency.release();
+            this.stop();
+            break;
+          }
+        }
+
         // Claim a task while holding the concurrency slot
-        const task = await this.taskService.claim();
+        const task = await this.taskService.claim(this.batchId);
 
         if (!task) {
           // No task available, release the slot and sleep
@@ -123,6 +146,8 @@ export class Worker {
    * Note: Assumes concurrency slot has already been acquired.
    */
   private async execute(task: i.Task): Promise<void> {
+    const taskStartTime = Date.now();
+
     try {
       if (this.rateLimiter) {
         await this.rateLimiter.acquire();
@@ -134,6 +159,8 @@ export class Worker {
       }
 
       const payload = JSON.parse(task.payload);
+
+      // Build context with optional deadline
       const context: i.TaskContext = {
         taskId: task.id,
         batchId: task.batchId,
@@ -141,10 +168,22 @@ export class Worker {
         signal: this.abortController.signal,
       };
 
+      // If we have interruption service and batchId, set deadline from criteria
+      if (this.interruptionService && task.batchId) {
+        const { criteria } = await this.interruptionService['batchService'].getWithCriteria(task.batchId);
+        if (criteria?.taskTimeoutMs) {
+          context.deadline = new Date(taskStartTime + criteria.taskTimeoutMs);
+        }
+      }
+
       const result = await handler(payload, context);
       await this.taskService.complete(task.id, result);
+
+      // Reset consecutive failures on success
+      this.consecutiveFailures = 0;
     } catch (error) {
-      await this.handleError(task, error);
+      const taskRuntimeMs = Date.now() - taskStartTime;
+      await this.handleError(task, error, taskRuntimeMs);
     } finally {
       this.concurrency.release();
     }
@@ -153,16 +192,49 @@ export class Worker {
   /**
    * Handle task execution errors.
    */
-  private async handleError(task: i.Task, error: unknown): Promise<void> {
+  private async handleError(task: i.Task, error: unknown, taskRuntimeMs?: number): Promise<void> {
     const isRetryable = !(error instanceof NonRetryableError);
     const shouldRetry = isRetryable && task.attempt < task.maxAttempt;
+
+    // Track failure type for interruption decisions
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (this.isRateLimitError(errorMessage)) {
+      this.rateLimitHits++;
+    } else if (this.isConcurrencyError(errorMessage)) {
+      this.concurrencyErrors++;
+    }
 
     if (shouldRetry) {
       // Reset to pending for automatic retry (attempt already incremented by claim)
       await this.taskService.retry(task.id);
+      this.consecutiveFailures++;
     } else {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.taskService.fail(task.id, message);
+      await this.taskService.fail(task.id, errorMessage);
+      this.consecutiveFailures++;
+
+      // Check if batch should be interrupted
+      if (task.batchId && this.interruptionService) {
+        const interrupted = await this.interruptionService.checkAndInterruptIfNeeded(
+          task.batchId,
+          {
+            consecutiveFailures: this.consecutiveFailures,
+            rateLimitHits: this.rateLimitHits,
+            concurrencyErrors: this.concurrencyErrors,
+            currentTaskRuntimeMs: taskRuntimeMs,
+          }
+        );
+        if (interrupted) {
+          this.stop();
+        }
+      }
     }
+  }
+
+  private isRateLimitError(message: string): boolean {
+    return message.includes('429') || message.toLowerCase().includes('rate limit');
+  }
+
+  private isConcurrencyError(message: string): boolean {
+    return message.includes('502') || message.includes('503') || message.toLowerCase().includes('bad gateway') || message.toLowerCase().includes('service unavailable');
   }
 }

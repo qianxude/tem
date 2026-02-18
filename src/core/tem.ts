@@ -1,5 +1,5 @@
 import { Database, type DatabaseOptions } from '../database/index.js';
-import { BatchService, TaskService } from '../services/index.js';
+import { BatchService, TaskService, BatchInterruptionService } from '../services/index.js';
 import { Worker, type WorkerConfig } from './worker.js';
 import {
   detectConstraints,
@@ -27,12 +27,16 @@ export interface TEMConfig {
 
   // Polling
   pollIntervalMs: number;
+
+  // Optional: Specific batch ID to process (if set, only processes this batch)
+  batchId?: string;
 }
 
 export class TEM {
   readonly batch: BatchService;
   readonly task: TaskService;
   readonly worker: Worker;
+  readonly interruption: BatchInterruptionService;
 
   private database: Database;
 
@@ -70,6 +74,7 @@ export class TEM {
   }
 
   constructor(config: TEMConfig) {
+
     // Initialize database
     const dbOptions: DatabaseOptions = {
       path: config.databasePath,
@@ -79,12 +84,15 @@ export class TEM {
     // Initialize services
     this.batch = new BatchService(this.database);
     this.task = new TaskService(this.database);
+    this.interruption = new BatchInterruptionService(this.database, this.batch);
 
     // Initialize worker with config
     const workerConfig: WorkerConfig = {
       concurrency: config.concurrency,
       pollIntervalMs: config.pollIntervalMs,
       rateLimit: config.rateLimit,
+      batchId: config.batchId,
+      interruptionService: this.interruption,
     };
     this.worker = new Worker(this.task, workerConfig);
   }
@@ -96,5 +104,25 @@ export class TEM {
   async stop(): Promise<void> {
     await this.worker.stop();
     this.database.close();
+  }
+
+  /**
+   * Manually interrupt a batch with a specified reason.
+   * This will stop the worker if processing this batch and prevent further tasks from being claimed.
+   *
+   * @param batchId - The ID of the batch to interrupt
+   * @param reason - The reason for interruption (default: 'manual')
+   * @param message - Optional custom message explaining the interruption
+   */
+  async interruptBatch(
+    batchId: string,
+    reason?: import('../interfaces/index.js').BatchInterruptionReason,
+    message?: string
+  ): Promise<void> {
+    await this.interruption.interrupt(
+      batchId,
+      reason ?? 'manual',
+      message ?? 'Batch manually interrupted'
+    );
   }
 }
