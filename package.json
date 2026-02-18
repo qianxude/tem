@@ -29,6 +29,7 @@
     "test:auto-detect": "bun test tests/integration/auto-detect.test.ts",
     "lint": "oxlint",
     "lint:file": "oxlint",
+    "example:llm-detect": "bun examples/llm-detect.ts",
     "dev": "bun --watch src/index.ts",
     "cli": "bun ./src/cli/index.ts",
     "publish:pkg": "bun publish --access public",
