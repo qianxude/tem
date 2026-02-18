@@ -6,6 +6,7 @@ export interface DetectOptions {
   timeoutMs?: number;
   maxConcurrencyToTest?: number;
   rateLimitTestDurationMs?: number;
+  maxRateLimitTestRequests?: number;
 }
 
 export interface DetectedConfig {
@@ -48,6 +49,7 @@ export async function detectConstraints(options: DetectOptions): Promise<Detecte
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxConcurrency = options.maxConcurrencyToTest ?? DEFAULT_MAX_CONCURRENCY;
   const rateLimitDurationMs = options.rateLimitTestDurationMs ?? DEFAULT_RATE_LIMIT_TEST_DURATION_MS;
+  const maxRateLimitTestRequests = options.maxRateLimitTestRequests ?? MAX_RATE_LIMIT_TEST_REQUESTS;
 
   const requestOptions: RequestOptions = {
     url: options.url,
@@ -64,7 +66,7 @@ export async function detectConstraints(options: DetectOptions): Promise<Detecte
 
   // Phase 2: Detect rate limit using safe concurrency (80% of detected)
   const safeConcurrency = Math.max(1, Math.floor(detectedConcurrency * 0.8));
-  const rateLimitResult = await detectRateLimit(requestOptions, safeConcurrency, rateLimitDurationMs, notes);
+  const rateLimitResult = await detectRateLimit(requestOptions, safeConcurrency, rateLimitDurationMs, maxRateLimitTestRequests, notes);
 
   // Calculate confidence
   const confidence = calculateConfidence(detectedConcurrency, rateLimitResult, notes);
@@ -206,6 +208,7 @@ async function detectRateLimit(
   options: RequestOptions,
   safeConcurrency: number,
   durationMs: number,
+  maxRequests: number,
   notes: string[]
 ): Promise<{ requests: number; windowMs: number }> {
   const startTime = Date.now();
@@ -214,7 +217,7 @@ async function detectRateLimit(
   let totalRequests = 0;
 
   // Send requests as fast as possible at safe concurrency
-  while (Date.now() - startTime < durationMs && totalRequests < MAX_RATE_LIMIT_TEST_REQUESTS) {
+  while (Date.now() - startTime < durationMs && totalRequests < maxRequests) {
     const batchStart = Date.now();
     const results = await sendBatch(options, safeConcurrency);
 

@@ -126,6 +126,8 @@ export interface DetectOptions {
   maxConcurrencyToTest?: number;
   /** Duration to run rate limit tests (default: 10000) */
   rateLimitTestDurationMs?: number;
+  /** Maximum number of requests to send during rate limit detection (default: 200) */
+  maxRateLimitTestRequests?: number;
 }
 
 export interface DetectedConfig {
