@@ -1,6 +1,6 @@
 # Publishing Guide
 
-This document describes how to publish `@qian/tem` to npm and manage version releases.
+This document describes how to publish `@qianxude/tem` to npm and manage version releases.
 
 ## Quick Start
 
@@ -88,7 +88,7 @@ Excludes: tests, scripts, docs, examples, config files.
 }
 ```
 
-- `access: public` - Required for scoped packages (@qian/tem)
+- `access: public` - Required for scoped packages (@qianxude/tem)
 - Scoped packages are private by default without this setting
 
 ## Manual Version Bump (Alternative)

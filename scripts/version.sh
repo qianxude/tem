@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Version bump script for @qian/tem
+# Version bump script for @qianxude/tem
 # Usage: ./scripts/version.sh [patch|minor|major]
 
 set -e
