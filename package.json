@@ -1,6 +1,6 @@
 {
   "name": "@qianxude/tem",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A lightweight task execution engine for IO-bound workloads with SQLite persistence, retry, and rate limiting",
   "module": "src/index.ts",
   "type": "module",
