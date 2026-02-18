@@ -8,7 +8,7 @@ import {
 } from '../utils/format.js';
 import { renderTable, renderKeyValue } from '../utils/table.js';
 
-interface BatchSummary {
+export interface BatchSummary {
   id: string;
   code: string;
   type: string;
@@ -21,18 +21,18 @@ interface BatchSummary {
   failed: number;
 }
 
-interface TaskTiming {
+export interface TaskTiming {
   avg_time: number;
   min_time: number;
   max_time: number;
 }
 
-interface ErrorPattern {
+export interface ErrorPattern {
   error: string;
   count: number;
 }
 
-interface StuckTask {
+export interface StuckTask {
   id: string;
   type: string;
   claimed_at: string;

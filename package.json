@@ -30,6 +30,7 @@
     "lint": "oxlint",
     "lint:file": "oxlint",
     "dev": "bun --watch src/index.ts",
+    "cli": "bun ./src/cli/index.ts",
     "publish:pkg": "bun publish --access public",
     "version:patch": "./scripts/version.sh patch",
     "version:minor": "./scripts/version.sh minor",
