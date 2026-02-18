@@ -4,6 +4,9 @@
   "description": "A lightweight task execution engine for IO-bound workloads with SQLite persistence, retry, and rate limiting",
   "module": "src/index.ts",
   "type": "module",
+  "bin": {
+    "tem": "./src/cli/index.ts"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
