@@ -6,6 +6,14 @@ Built for **single-process, IO-bound scenarios** where you need reliable task ex
 
 ---
 
+## Installation
+
+```sh
+bun add @qianxude/tem
+```
+
+---
+
 ## Features
 
 - **SQLite Persistence** — Tasks survive process restarts using `bun:sqlite` with WAL mode
@@ -43,38 +51,37 @@ Don't use tem when you need:
 ```typescript
 import { TEM } from "@qianxude/tem";
 
-// Initialize
 const tem = new TEM({
-  dbPath: "./tem.db",
-  concurrency: 5,           // Max 5 concurrent tasks
-  pollInterval: 1000,       // Check for new tasks every 1s
-  rateLimit: {
-    perMinute: 60,          // Respect LLM provider limits
-    perSecond: 5
-  }
+  databasePath: "./tem.db",
+  concurrency: 5,
+  pollIntervalMs: 1000,
+  rateLimit: { requests: 60, windowMs: 60000 }  // 60 req/min
 });
 
 // Create a batch
 const batch = await tem.batch.create({
-  code: "2026-02-15-llm-fix",  // Your custom tag
+  code: "2026-02-15-llm-fix",
   type: "rewrite-docs"
 });
 
-// Enqueue tasks
-await tem.task.enqueueMany([
+// Create tasks
+await tem.task.createMany([
   { batchId: batch.id, type: "rewrite", payload: { docId: 1 } },
   { batchId: batch.id, type: "rewrite", payload: { docId: 2 } },
   { batchId: batch.id, type: "rewrite", payload: { docId: 3 } }
 ]);
 
-// Register handler
-tem.worker.register("rewrite", async (task) => {
-  const result = await callLLM(task.payload);
+// Register handler — payload is your task data, context has metadata
+tem.worker.register("rewrite", async (payload, context) => {
+  const result = await callLLM(payload);
   return result;  // Stored in task.result
 });
 
 // Start processing
 tem.worker.start();
+
+// Stop when done
+await tem.stop();
 ```
 
 ---
@@ -95,6 +102,99 @@ pending (auto-retry)
 running
    ↓ error + attempt >= max_attempt
 failed
+```
+
+---
+
+## Core Concepts
+
+- **Batch** — A named group of tasks. All recovery operations (resume, retry) work at batch level.
+- **Task** — A unit of work with a `type`, opaque `payload`, and tracked `status`.
+- **Worker** — Polls for pending tasks and dispatches them to registered handlers by type.
+- **Payload** — Opaque JSON; the framework never parses it. Your handler receives it as-is.
+- **Claim model** — Tasks are acquired atomically (`UPDATE ... WHERE status='pending'`), preventing duplicate execution.
+
+---
+
+## Error Handling
+
+By default, any thrown error causes the task to retry up to `defaultMaxAttempts`:
+
+```typescript
+tem.worker.register("process", async (payload, context) => {
+  console.log(`Attempt ${context.attempt}`);
+  const result = await callAPI(payload);  // throws → auto-retry
+  return result;
+});
+```
+
+For permanent failures that should not be retried, throw `NonRetryableError`:
+
+```typescript
+import { TEM, NonRetryableError } from "@qianxude/tem";
+
+tem.worker.register("validate", async (payload) => {
+  if (!payload.id) {
+    throw new NonRetryableError("Missing required field: id");
+    // Task goes directly to 'failed', no retries
+  }
+  return process(payload);
+});
+```
+
+---
+
+## Batch Interruption
+
+Automatically stop a batch when error thresholds are exceeded:
+
+```typescript
+const batch = await tem.batch.create({
+  code: "llm-run-01",
+  type: "summarize",
+  interruptionCriteria: {
+    maxErrorRate: 0.3,          // Stop if >30% tasks fail
+    maxFailedTasks: 10,         // Stop if >10 tasks fail
+    maxConsecutiveFailures: 5,  // Stop if 5 failures in a row
+  }
+});
+```
+
+Check interruption details after the batch stops:
+
+```typescript
+const logs = await tem.interruption.getInterruptionLog(batchId);
+// [{ reason, message, statsAtInterruption }]
+```
+
+Manually interrupt a running batch:
+
+```typescript
+await tem.interruptBatch(batchId, "manual", "Stopping due to bad data");
+```
+
+---
+
+## Auto-Detect Constraints
+
+Probe an API endpoint to discover its concurrency and rate limits before running tasks:
+
+```typescript
+const config = await TEM.detectConstraints({
+  url: "https://api.example.com/v1/endpoint",
+  method: "POST",
+  headers: { Authorization: "Bearer " + process.env.API_KEY },
+  body: { /* minimal valid request */ },
+  timeoutMs: 30000,
+  maxConcurrencyToTest: 50,
+  rateLimitTestDurationMs: 10000,
+});
+
+const tem = new TEM({
+  databasePath: "./tasks.db",
+  concurrency: config.concurrency,
+  rateLimit: config.rateLimit,
+});
 ```
 
 ---
@@ -133,7 +233,7 @@ TEM
 ├── Worker             # Execution loop with concurrency/rate limiting
 ├── ConcurrencyController  # Semaphore for local concurrency
 ├── RateLimiter        # Token bucket for API rate limits
-└── RetryStrategy      # Configurable retry logic
+└── BatchInterruptionService  # Auto-stop on error thresholds
 ```
 
 ### Why Claim-Based?
@@ -199,12 +299,13 @@ This ensures:
 
 ```typescript
 interface TEMConfig {
-  dbPath: string;           // SQLite file path
-  concurrency?: number;     // Default: 5
-  pollInterval?: number;    // Default: 1000ms
+  databasePath: string;       // SQLite file path
+  concurrency?: number;       // Default: 5
+  pollIntervalMs?: number;    // Default: 1000ms
+  defaultMaxAttempts?: number; // Default: 3
   rateLimit?: {
-    perMinute?: number;
-    perSecond?: number;
+    requests: number;         // Number of requests
+    windowMs: number;         // Time window in ms (e.g. 60000 for per-minute)
   };
 }
 ```
@@ -216,57 +317,71 @@ interface TEMConfig {
 const batch = await tem.batch.create({
   code: "unique-batch-code",
   type: "batch-type",
-  metadata?: { ... }
+  metadata?: { ... },
+  interruptionCriteria?: {
+    maxErrorRate?: number;
+    maxFailedTasks?: number;
+    maxConsecutiveFailures?: number;
+  }
 });
 
-// Get batch info
-const batch = await tem.batch.get(batchId);
-
-// List batches
-const batches = await tem.batch.list({ type?: "..." });
+// Get batch by ID
+const batch = await tem.batch.getById(batchId);
 
 // Get statistics
 const stats = await tem.batch.getStats(batchId);
-// { pending: 5, running: 2, completed: 10, failed: 3 }
+// { pending, running, completed, failed, total }
 
 // Resume after crash (running → pending)
 await tem.batch.resume(batchId);
 
-// Retry all failed (failed → pending, attempt=0)
+// Retry all failed (failed → pending, attempt reset)
 await tem.batch.retryFailed(batchId);
 ```
 
 ### Task Operations
 
 ```typescript
-// Enqueue single task
-await tem.task.enqueue({
+// Create single task
+await tem.task.create({
   batchId: string,
   type: string,
   payload: object,
-  maxAttempt?: number  // Default: 3
+  maxAttempts?: number
 });
 
-// Bulk enqueue (transaction)
-await tem.task.enqueueMany([
+// Bulk create (single transaction)
+await tem.task.createMany([
   { batchId, type, payload },
   ...
 ]);
+
+// Get task by ID
+const task = await tem.task.getById(taskId);
 ```
 
 ### Worker
 
 ```typescript
 // Register handler
-tem.worker.register("task-type", async (task) => {
-  // task.id, task.batchId, task.payload, task.attempt
-  const result = await doWork(task.payload);
-  return result;  // Will be JSON-serialized to task.result
+// payload: your task data; context: { taskId, batchId, attempt }
+tem.worker.register("task-type", async (payload, context) => {
+  const result = await doWork(payload);
+  return result;  // JSON-serialized to task.result
 });
 
 // Control execution
 tem.worker.start();
-await tem.worker.stop();
+await tem.stop();  // Stops worker and closes DB
+```
+
+### NonRetryableError
+
+```typescript
+import { NonRetryableError } from "@qianxude/tem";
+
+throw new NonRetryableError("reason");
+// Task goes to 'failed' immediately, skipping remaining attempts
 ```
 
 ---

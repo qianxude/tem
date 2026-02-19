@@ -22,6 +22,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "coverage": "bun test --coverage",
     "test:integration": "bun test tests/integration/*.test.ts",
     "test:mock-server": "bun test tests/integration/mock-server.test.ts",
     "test:simple-tasks": "bun test tests/integration/tem-with-mock-server.test.ts",

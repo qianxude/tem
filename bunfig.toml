@@ -4,3 +4,6 @@ exact = true
 
 [test]
 preload = "./tests/setup.ts"
+coverageReporter = ["text", "lcov"]
+coverageDir = "./coverage"
+coverageThreshold = { line = 0.8, function = 0.8, statement = 0.8 }
