@@ -413,6 +413,37 @@ throw new NonRetryableError("reason");
 
 ---
 
+## Mock Server
+
+Tem includes a built-in mock HTTP server for testing task execution under various constraints. Use it to simulate APIs with:
+
+- **Concurrency limits** — Test how your tasks handle 503 errors
+- **Rate limiting** — Verify retry behavior against 429 responses
+- **Error simulation** — Test resilience with configurable failure rates
+
+See [src/mock-server/README.md](src/mock-server/README.md) for detailed documentation.
+
+---
+
+## CLI
+
+Tem includes a CLI for batch diagnostics and monitoring:
+
+```sh
+# Generate diagnostic report
+tem report ./tem.db my-batch
+
+# List failed tasks
+tem list ./tem.db --batch my-batch --status failed
+
+# Watch batch progress in real-time
+tem watch ./tem.db --latest
+```
+
+See [src/cli/README.md](src/cli/README.md) for full documentation.
+
+---
+
 ## License
 
 MIT

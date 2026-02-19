@@ -1,14 +1,15 @@
 # Mock Server
 
-A lightweight HTTP server for simulating external API services with configurable concurrency and rate limiting constraints. Used for testing TEM's task execution capabilities under various load conditions.
+A lightweight HTTP server for simulating external API services with configurable concurrency, rate limiting, and error simulation. Used for testing TEM's task execution capabilities under various load conditions.
 
 ## Overview
 
 The mock server provides a controlled environment to test how TEM handles:
 
-- **Concurrency limits** - Simulate services that reject requests when too many are in flight
-- **Rate limiting** - Test backoff and retry behavior against rate-limited endpoints
-- **Processing delays** - Verify timeout handling and async processing
+- **Concurrency limits** — Simulate services that reject requests when too many are in flight (503 errors)
+- **Rate limiting** — Test backoff and retry behavior against rate-limited endpoints (429 errors)
+- **Error simulation** — Verify resilience with configurable random failure rates
+- **Processing delays** — Verify timeout handling and async processing
 
 ## Architecture
 
@@ -30,6 +31,8 @@ The mock server provides a controlled environment to test how TEM handles:
 | Component | File | Purpose |
 |-----------|------|---------|
 | `startMockServer` | `server.ts` | Server lifecycle management |
+| `createMockService` | `server.ts` | Client helper to create services |
+| `createErrorSimulation` | `server.ts` | Helper to create error simulation config |
 | `createRouter` | `router.ts` | HTTP routing and request handling |
 | `MockService` | `service.ts` | Per-service concurrency and rate limiting |
 | `RejectingRateLimiter` | `service.ts` | Token bucket rate limiter with immediate reject |
@@ -49,7 +52,8 @@ startMockServer({
   defaultService: {
     maxConcurrency: 3,
     rateLimit: { limit: 10, windowMs: 1000 },
-    delayMs: [10, 50]
+    delayMs: [10, 50],
+    errorSimulation: { rate: 0.1, statusCode: 500 }
   }
 });
 ```
@@ -61,10 +65,7 @@ Dynamic service creation and management. Each service has its own concurrency/ra
 **Use case:** Complex tests with multiple services having different constraints.
 
 ```typescript
-startMockServer({
-  port: 8080,
-  mode: 'multi'
-});
+startMockServer({ port: 8080, mode: 'multi' });
 
 // Create services dynamically via HTTP API
 ```
@@ -75,7 +76,7 @@ startMockServer({
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Access the default service |
+| `GET` / `POST` | `/` | Access the default service |
 | `POST` | `/shutdown` | Shutdown the server |
 
 ### Multi Mode Endpoints
@@ -84,7 +85,7 @@ startMockServer({
 |--------|------|-------------|
 | `POST` | `/service/:name` | Create or replace a service |
 | `DELETE` | `/service/:name` | Delete a service |
-| `GET` | `/mock/:name` | Access a service |
+| `GET` / `POST` | `/mock/:name` | Access a service |
 | `POST` | `/shutdown` | Shutdown the server |
 
 ### Create Service (Multi Mode Only)
@@ -99,7 +100,12 @@ Content-Type: application/json
     "limit": 10,                 // Requests per window (required)
     "windowMs": 1000             // Window size in ms (required)
   },
-  "delayMs": [10, 200]           // [min, max] processing delay (optional, default: [10, 200])
+  "delayMs": [10, 200],          // [min, max] processing delay (optional, default: [10, 200])
+  "errorSimulation": {           // Optional error simulation config
+    "rate": 0.1,                 // Error rate 0-1 (10% = 0.1)
+    "statusCode": 503,           // HTTP status to return (default: 500)
+    "errorMessage": "simulated_error"  // Error message (default: "internal_server_error")
+  }
 }
 ```
 
@@ -114,11 +120,30 @@ Content-Type: application/json
 }
 ```
 
+### Delete Service (Multi Mode Only)
+
+```http
+DELETE /service/:name
+```
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "service": "test1",
+  "status": "deleted"
+}
+```
+
 ### Access Service
 
 ```http
 GET /mock/:name        # Multi mode
+POST /mock/:name       # Multi mode (body ignored)
 GET /                  # Single mode
+POST /                 # Single mode (body ignored)
 ```
 
 **Success Response (200):**
@@ -152,6 +177,8 @@ Content-Type: application/json
 }
 ```
 
+The server will stop accepting new connections and exit the process after a brief delay.
+
 ## Error Responses
 
 | Status | Error Code | Description |
@@ -162,6 +189,21 @@ Content-Type: application/json
 | `404` | `service_not_found` | Service does not exist |
 | `429` | `rate_limit_exceeded` | Rate limit reached |
 | `503` | `concurrency_limit_exceeded` | Concurrency limit reached |
+
+### Error Simulation
+
+When `errorSimulation` is configured, requests may randomly fail with:
+
+```http
+HTTP/1.1 500 Internal Server Error  // Or configured statusCode
+Content-Type: application/json
+
+{
+  "error": "internal_server_error"  // Or configured errorMessage
+}
+```
+
+The error is checked **before** acquiring concurrency/rate limit resources, so simulated errors don't count against limits.
 
 ## Configuration
 
@@ -185,6 +227,21 @@ interface ServiceConfig {
     windowMs: number;              // Window duration in milliseconds
   };
   delayMs: [number, number];       // [min, max] simulated processing delay
+  errorSimulation?: {              // Optional error simulation
+    rate: number;                  // Error rate 0-1
+    statusCode?: number;           // HTTP status code (default: 500)
+    errorMessage?: string;         // Error message (default: "internal_server_error")
+  };
+}
+```
+
+### ErrorSimulationConfig
+
+```typescript
+interface ErrorSimulationConfig {
+  rate: number;        // Error rate 0-1 (e.g., 0.1 = 10% error rate)
+  statusCode?: number; // HTTP status code to return (default: 500)
+  errorMessage?: string; // Error message (default: "internal_server_error")
 }
 ```
 
@@ -315,6 +372,29 @@ console.log(r3.status);  // 429
 console.log(await r3.json());  // { error: 'rate_limit_exceeded' }
 ```
 
+### Testing Error Simulation
+
+```typescript
+import { startMockServer, stopMockServer, createErrorSimulation } from './src/mock-server';
+
+startMockServer({
+  port: 8080,
+  mode: 'single',
+  defaultService: {
+    maxConcurrency: 10,
+    rateLimit: { limit: 100, windowMs: 1000 },
+    delayMs: [10, 50],
+    errorSimulation: createErrorSimulation(0.3, 503, "service_unavailable")
+  }
+});
+
+// Approximately 30% of requests will fail with 503
+for (let i = 0; i < 10; i++) {
+  const res = await fetch('http://localhost:8080/');
+  console.log(res.status);  // Mix of 200 and 503
+}
+```
+
 ## Rate Limiting Algorithm
 
 The mock server uses a **token bucket** algorithm for rate limiting:
@@ -332,7 +412,23 @@ Concurrency is tracked per-service:
 - Decrements when request completes (in `finally` block)
 - If `currentConcurrency >= maxConcurrency`, new requests get 503
 
+## Error Simulation
+
+Error simulation is checked before acquiring resources:
+
+```typescript
+// Pseudocode
+if (Math.random() < errorSimulation.rate) {
+  return errorResponse;  // Doesn't consume concurrency/rate limit tokens
+}
+// Continue with normal request handling...
+```
+
+This ensures that simulated errors don't deplete your concurrency slots or rate limit budget.
+
 ## Programmatic API
+
+### Server Lifecycle
 
 ```typescript
 import { startMockServer, stopMockServer, getServerState } from './src/mock-server';
@@ -340,7 +436,7 @@ import { startMockServer, stopMockServer, getServerState } from './src/mock-serv
 // Start server
 startMockServer(config: ServerConfig): void
 
-// Stop server programmatically
+// Stop server programmatically (for testing)
 stopMockServer(): void
 
 // Get current state (for testing)
@@ -349,4 +445,75 @@ getServerState(): {
   mode: 'single' | 'multi';
   hasDefaultService: boolean;
 }
+```
+
+### Client Helpers
+
+```typescript
+import { createMockService, createErrorSimulation } from './src/mock-server';
+
+// Create a service programmatically (wraps HTTP call)
+createMockService(
+  name: string,
+  config: CreateServiceRequest,
+  mockUrl?: string  // defaults to http://localhost:19999
+): Promise<Response>
+
+// Create error simulation config with validation
+createErrorSimulation(
+  rate: number,           // 0-1 error rate
+  statusCode?: number,    // HTTP status (default: 500)
+  errorMessage?: string   // Error message
+): ErrorSimulationConfig
+```
+
+Example using client helpers:
+
+```typescript
+import { createMockService, createErrorSimulation } from './src/mock-server';
+
+// Create service with error simulation
+await createMockService('flaky-api', {
+  maxConcurrency: 5,
+  rateLimit: { limit: 10, windowMs: 1000 },
+  delayMs: [50, 100],
+  errorSimulation: createErrorSimulation(0.2, 503)
+});
+
+// Use the service
+const res = await fetch('http://localhost:19999/mock/flaky-api');
+```
+
+## Testing with TEM
+
+The mock server is designed to integrate seamlessly with TEM for testing retry and error handling:
+
+```typescript
+import { TEM } from '@qianxude/tem';
+import { startMockServer, createMockService, createErrorSimulation } from './src/mock-server';
+
+// Start mock server with flaky service
+startMockServer({ port: 19999, mode: 'multi' });
+
+await createMockService('api', {
+  maxConcurrency: 3,
+  rateLimit: { limit: 10, windowMs: 1000 },
+  errorSimulation: createErrorSimulation(0.2)  // 20% failure rate
+});
+
+// Configure TEM to match mock server limits
+const tem = new TEM({
+  databasePath: ':memory:',
+  concurrency: 3,
+  rateLimit: { requests: 10, windowMs: 1000 }
+});
+
+// Register handler that calls mock server
+tem.worker.register('test', async (payload) => {
+  const res = await fetch('http://localhost:19999/mock/api');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+});
+
+// TEM's retry mechanism will handle the 20% failure rate
 ```
