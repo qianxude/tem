@@ -6,7 +6,9 @@ export {
   ConcurrencyController,
   RateLimiter,
   printDetectedConfig,
+  waitForBatch,
   type RateLimitConfig,
+  type WaitForBatchOptions,
 } from './utils/index.js';
 export {
   TEM,
