@@ -27,7 +27,7 @@ interface TaskTiming {
 
 interface RecentError {
   error: string;
-  failed_at: string;
+  completed_at: string;
 }
 
 interface WatchOptions {
@@ -105,12 +105,12 @@ function getRecentErrors(db: Database, batchId: string, limit: number): RecentEr
   return db.query<RecentError>(
     `SELECT
       error,
-      failed_at
+      completed_at
     FROM task
     WHERE batch_id = ?
       AND status = 'failed'
       AND error IS NOT NULL
-    ORDER BY failed_at DESC
+    ORDER BY completed_at DESC
     LIMIT ?`,
     [batchId, limit]
   );
@@ -396,7 +396,7 @@ function renderFinalReport(
     lines.push('');
     lines.push('Recent Failures');
     const errorData = recentErrors.slice(0, 5).map(e => ({
-      time: formatTimestamp(e.failed_at).slice(0, 19),
+      time: formatTimestamp(e.completed_at).slice(0, 19),
       error: truncate(e.error, 60),
     }));
     lines.push(renderTable(
