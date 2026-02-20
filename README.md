@@ -114,6 +114,18 @@ failed
 - **Payload** — Opaque JSON; the framework never parses it. Your handler receives it as-is.
 - **Claim model** — Tasks are acquired atomically (`UPDATE ... WHERE status='pending'`), preventing duplicate execution.
 
+### Task Ordering
+
+Tasks within a batch are claimed and executed in **FIFO order** (First-In-First-Out) based on creation time.
+When multiple tasks are pending, the task created first will be claimed first:
+
+```typescript
+// These tasks will be claimed in order: task1, then task2, then task3
+await tem.task.create({ batchId: batch.id, type: "process", payload: { id: 1 } }); // task1
+await tem.task.create({ batchId: batch.id, type: "process", payload: { id: 2 } }); // task2
+await tem.task.create({ batchId: batch.id, type: "process", payload: { id: 3 } }); // task3
+```
+
 ---
 
 ## Error Handling
