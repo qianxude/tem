@@ -6,7 +6,7 @@ import {
   type DetectOptions,
   type DetectedConfig,
 } from '../utils/auto-detect.js';
-import type { BatchInterruptionReason } from '../interfaces/index.js';
+import type { BatchInterruptionReason, BatchInterruptionCriteria } from '../interfaces/index.js';
 
 export type { DetectOptions, DetectedConfig };
 
@@ -31,6 +31,9 @@ export interface TEMConfig {
 
   // Optional: Specific batch ID to process (if set, only processes this batch)
   batchId?: string;
+
+  // Default interruption criteria for all batches (batch-level overrides these)
+  defaultInterruptionCriteria?: BatchInterruptionCriteria;
 }
 
 export class TEM {
@@ -85,7 +88,7 @@ export class TEM {
     // Initialize services
     this.batch = new BatchService(this.database);
     this.task = new TaskService(this.database);
-    this.interruption = new BatchInterruptionService(this.database, this.batch);
+    this.interruption = new BatchInterruptionService(this.database, this.batch, config.defaultInterruptionCriteria);
 
     // Initialize worker with config
     const workerConfig: WorkerConfig = {

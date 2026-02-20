@@ -105,6 +105,9 @@ export interface TEMConfig {
 
   // Polling
   pollIntervalMs: number;
+
+  // Default interruption criteria for all batches (batch-level overrides these)
+  defaultInterruptionCriteria?: BatchInterruptionCriteria;
 }
 
 // ============================================================================

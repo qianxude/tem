@@ -13,7 +13,8 @@ export interface BatchInterruptionRow {
 export class BatchInterruptionService implements i.BatchInterruptionService {
   constructor(
     private db: Database,
-    private batchService: BatchService
+    private batchService: BatchService,
+    private defaultCriteria?: i.BatchInterruptionCriteria
   ) {}
 
   /**
@@ -30,12 +31,17 @@ export class BatchInterruptionService implements i.BatchInterruptionService {
     }
   ): Promise<boolean> {
     // Fetch batch with its interruption criteria
-    const { batch, criteria } = await this.batchService.getWithCriteria(batchId);
+    const { batch, criteria: batchCriteria } = await this.batchService.getWithCriteria(batchId);
 
     // If already interrupted or completed, no need to check
     if (batch.status !== 'active') {
       return false;
     }
+
+    // Merge criteria: TEM-level (default) overrides batch-level
+    const criteria: i.BatchInterruptionCriteria | undefined = batchCriteria || this.defaultCriteria
+      ? { ...batchCriteria, ...this.defaultCriteria }
+      : undefined;
 
     // If no criteria set, never interrupt
     if (!criteria) {
