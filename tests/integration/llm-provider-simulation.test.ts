@@ -13,20 +13,6 @@ import type { BatchInterruptionCriteria } from '../../src/interfaces/index.js';
 const TEST_PORT = 19997;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
 
-// Simulates OpenAI/Groq/Claude low-tier plan
-const LLM_PROVIDER_CONFIG = {
-  maxConcurrency: 2,        // Only 2 concurrent requests allowed
-  rateLimit: { limit: 20, windowMs: 60000 },  // 20 req per 60s
-  delayMs: [1000, 5000] as [number, number],  // 1-5s response time (realistic for LLM)
-};
-
-// Mid-tier provider config
-const MID_TIER_CONFIG = {
-  maxConcurrency: 5,
-  rateLimit: { limit: 100, windowMs: 60000 },  // 100 req per 60s
-  delayMs: [800, 3000] as [number, number],    // 0.8-3s response time
-};
-
 // LLM Task types
 interface LLMTaskPayload {
   provider: string;
@@ -263,7 +249,7 @@ describe('TEM with LLM Provider Simulation', () => {
 
       tem.worker.register<LLMTaskPayload, LLMTaskResult>(
         'llm-request',
-        async (payload) => {
+        async (_) => {
           // No backoff needed - TEM limits prevent errors
           const res = await fetch(`${MOCK_URL}/mock/regulated-llm`, {
             method: 'GET',
@@ -1010,7 +996,7 @@ describe('TEM with LLM Provider Simulation', () => {
 
         tem.worker.register<LLMTaskPayload, LLMTaskResult>(
           'llm-request',
-          async (payload, context) => {
+          async (_payload, _context) => {
             const res = await fetch(`${MOCK_URL}/mock/rate-limited-llm-provider`, {
               method: 'GET',
             });

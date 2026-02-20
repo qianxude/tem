@@ -4,7 +4,7 @@ const url = process.env.LLM_BASE_URL!.replace(/\/?$/, '/') + 'chat/completions';
 const model = process.env.LLM_MODEL!;
 
 const systemPrompt = await Bun.file('./examples/company_industry_batch.md').text();
-const inputData = await Bun.file('./examples/company_indestry_input.json').text();
+const inputData = await Bun.file('./examples/company_industry_input.json').text();
 
 const config: DetectOptions = {
   url,

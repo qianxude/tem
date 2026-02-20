@@ -8,7 +8,7 @@ import { startMockServer, stopMockServer, createMockService } from '../../src/mo
 import type { MockResponse } from '../../src/mock-server/types.js';
 import * as i from '../../src/interfaces/index.js';
 import { waitForBatch } from '../../src/utils/index.js';
-import type { BatchInterruptionCriteria, BatchInterruption } from '../../src/interfaces/index.js';
+import type { BatchInterruptionCriteria } from '../../src/interfaces/index.js';
 
 const TEST_PORT = 19998;
 const MOCK_URL = `http://localhost:${TEST_PORT}`;
@@ -1166,7 +1166,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create 10 tasks
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {
@@ -1251,7 +1251,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create 10 tasks
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {
@@ -1339,7 +1339,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create tasks that will fail with rate limit errors
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {
@@ -1421,7 +1421,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create tasks that will fail with 503 errors
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {
@@ -1492,7 +1492,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create several tasks
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 10 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {
@@ -1578,7 +1578,7 @@ describe('TEM with Mock Server Integration', () => {
         });
 
         // Create 5 tasks
-        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 5 }, (_, i) => ({
+        const taskInputs: i.CreateTaskInput[] = Array.from({ length: 5 }, (_) => ({
           batchId: batch.id,
           type: 'api-call',
           payload: {

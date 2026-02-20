@@ -1,3 +1,4 @@
+// oxlint-disable no-unused-vars
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../src/database/index.js';
 import { BatchService, TaskService } from '../../src/services/index.js';
