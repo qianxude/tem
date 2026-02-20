@@ -116,7 +116,7 @@ Follow the [Interface Organization Patterns](docs/interface-organization-pattern
 - Module-level interfaces: `src/some_module/interfaces/`
 
 ## Development Notes
-
+- fuck the backward compatibility, i don't want to keep any of backward compatibility code. When I update/upgrade/refactor some code, i just want change them with new design/interfaces/signatures totally without old one.
 - When refactoring, do not introduce backward-compatibility code or preserve legacy pathways:
   1. Refactoring is a forward-only process: architecture and business logic are expected to evolve together.
   2. Use forward-engineered solutions to address current needs, rather than backward-compatible workarounds.

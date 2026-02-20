@@ -6,6 +6,7 @@ import {
   type DetectOptions,
   type DetectedConfig,
 } from '../utils/auto-detect.js';
+import type { BatchInterruptionReason } from '../interfaces/index.js';
 
 export type { DetectOptions, DetectedConfig };
 
@@ -116,7 +117,7 @@ export class TEM {
    */
   async interruptBatch(
     batchId: string,
-    reason?: import('../interfaces/index.js').BatchInterruptionReason,
+    reason?: BatchInterruptionReason,
     message?: string
   ): Promise<void> {
     await this.interruption.interrupt(

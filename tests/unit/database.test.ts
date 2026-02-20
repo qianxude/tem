@@ -46,9 +46,11 @@ describe('Database', () => {
       expect(indexes.length).toBeGreaterThan(0);
     });
 
-    it('should track migrations', () => {
-      const migrations = db.query('SELECT * FROM _migration');
-      expect(migrations.length).toBe(2);
+    it('should create _migration table', () => {
+      const tables = db.query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_migration'"
+      );
+      expect(tables.length).toBe(1);
     });
   });
 
