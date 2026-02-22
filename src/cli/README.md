@@ -138,12 +138,12 @@ tem watch <db-path> [batch-code]
 - `--latest` - Watch the most recently created batch
 - `--interval N` - Refresh interval in seconds (default: 5)
 - `--timeout N` - Maximum watch time in seconds (default: 3600)
-- `--no-clear` - Don't clear screen between updates
+- `--append` - Append reports instead of clearing screen (creates scrollable history)
 
 **Examples:**
 
 ```sh
-# Watch the latest batch
+# Watch the latest batch (single report mode)
 tem watch ./tem.db --latest
 
 # Watch specific batch with 10-second refresh
@@ -152,8 +152,8 @@ tem watch ./tem.db my-batch-code --interval 10
 # Watch for up to 5 minutes
 tem watch ./tem.db --latest --timeout 300
 
-# Watch without clearing screen (for logging)
-tem watch ./tem.db --latest --no-clear
+# Watch with appended reports (scrollable history)
+tem watch ./tem.db --latest --append
 ```
 
 **Watch display includes:**

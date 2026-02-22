@@ -29,7 +29,7 @@ Watch command options:
   --latest                       Use the most recently created batch
   --interval N                   Refresh interval in seconds (default: 5)
   --timeout N                    Maximum watch time in seconds (default: 3600)
-  --no-clear                     Don't clear screen between updates
+  --append                       Append reports instead of clearing screen
 
 Examples:
   tem report ./test.db                    # Summary of all batches

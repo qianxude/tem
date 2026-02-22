@@ -33,7 +33,7 @@ interface RecentError {
 interface WatchOptions {
   interval: number;
   timeout: number;
-  noClear: boolean;
+  append: boolean;
   latest: boolean;
 }
 
@@ -422,7 +422,7 @@ export async function watchCommand(
   const options: WatchOptions = {
     interval: (parseInt(String(flags['interval'] || '5'), 10) || 5) * 1000,
     timeout: (parseInt(String(flags['timeout'] || '3600'), 10) || 3600) * 1000,
-    noClear: flags['no-clear'] === true,
+    append: flags['append'] === true,
     latest: flags['latest'] === true,
   };
 
@@ -499,7 +499,7 @@ export async function watchCommand(
     });
 
     // Initial render
-    if (!options.noClear) clearScreen();
+    if (!options.append) clearScreen();
     const timing = getTaskTiming(db, batchId);
     const recentErrors = getRecentErrors(db, batchId, 3);
     const stuckCount = getStuckTaskCount(db, batchId);
@@ -511,7 +511,7 @@ export async function watchCommand(
         // Check timeout
         if (Date.now() - state.startTime > options.timeout) {
           clearInterval(intervalId);
-          if (!options.noClear) clearScreen();
+          if (!options.append) clearScreen();
           console.error('Watch timeout reached');
           db.close();
           process.exit(1);
@@ -520,7 +520,7 @@ export async function watchCommand(
         // Check if should exit
         if (state.shouldExit) {
           clearInterval(intervalId);
-          if (!options.noClear) clearScreen();
+          if (!options.append) clearScreen();
           console.log('\nWatch interrupted by user');
           db.close();
           process.exit(state.exitCode);
@@ -536,7 +536,12 @@ export async function watchCommand(
         }
 
         // Render update
-        if (!options.noClear) clearScreen();
+        if (options.append) {
+          // Print separator between reports in append mode
+          console.log('\n' + '─'.repeat(70));
+        } else {
+          clearScreen();
+        }
         const timing = getTaskTiming(db, batchId);
         const recentErrors = getRecentErrors(db, batchId, 3);
         const stuckCount = getStuckTaskCount(db, batchId);
@@ -545,7 +550,11 @@ export async function watchCommand(
         // Check if batch is done
         if (!shouldContinueWatching(summary)) {
           clearInterval(intervalId);
-          if (!options.noClear) clearScreen();
+          if (options.append) {
+            console.log('\n' + '═'.repeat(70));
+          } else {
+            clearScreen();
+          }
           console.log(renderFinalReport(summary, timing, recentErrors, stuckCount, state));
           db.close();
           process.exit(0);
