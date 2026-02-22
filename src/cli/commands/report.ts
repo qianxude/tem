@@ -25,6 +25,9 @@ export interface TaskTiming {
   avg_time: number;
   min_time: number;
   max_time: number;
+  avg_execution_time: number;
+  min_execution_time: number;
+  max_execution_time: number;
 }
 
 export interface ErrorPattern {
@@ -111,11 +114,21 @@ function getTaskTiming(db: Database, batchId: string): TaskTiming | null {
       ) * 1000 as min_time,
       MAX(
         unixepoch(completed_at) - unixepoch(created_at)
-      ) * 1000 as max_time
+      ) * 1000 as max_time,
+      AVG(
+        unixepoch(completed_at) - unixepoch(claimed_at)
+      ) * 1000 as avg_execution_time,
+      MIN(
+        unixepoch(completed_at) - unixepoch(claimed_at)
+      ) * 1000 as min_execution_time,
+      MAX(
+        unixepoch(completed_at) - unixepoch(claimed_at)
+      ) * 1000 as max_execution_time
     FROM task
     WHERE batch_id = ?
       AND status = 'completed'
-      AND completed_at IS NOT NULL`,
+      AND completed_at IS NOT NULL
+      AND claimed_at IS NOT NULL`,
     [batchId]
   );
   return rows[0] || null;
@@ -262,31 +275,56 @@ function printDetailedReport(
   if (timing && timing.avg_time !== null) {
     console.log();
     console.log('Timing Analysis');
-    const timingData = [
+
+    // Lifetime timing (created_at to completed_at)
+    const lifetimeData = [
       {
-        key: 'Avg Task Time',
+        key: 'Avg Lifetime',
         value: formatDuration(Math.round(timing.avg_time)),
       },
       {
-        key: 'Min Task Time',
+        key: 'Min Lifetime',
         value: formatDuration(Math.round(timing.min_time)),
       },
       {
-        key: 'Max Task Time',
+        key: 'Max Lifetime',
         value: formatDuration(Math.round(timing.max_time)),
       },
     ];
+    console.log(renderKeyValue(lifetimeData));
+
+    // Execution timing (claimed_at to completed_at)
+    if (timing.avg_execution_time !== null) {
+      console.log();
+      const executionData = [
+        {
+          key: 'Avg Execution',
+          value: formatDuration(Math.round(timing.avg_execution_time)),
+        },
+        {
+          key: 'Min Execution',
+          value: formatDuration(Math.round(timing.min_execution_time)),
+        },
+        {
+          key: 'Max Execution',
+          value: formatDuration(Math.round(timing.max_execution_time)),
+        },
+      ];
+      console.log(renderKeyValue(executionData));
+    }
 
     // Calculate throughput
     if (summary.completed > 0 && timing.avg_time > 0) {
       const tasksPerSecond = 1000 / timing.avg_time;
-      timingData.push({
-        key: 'Throughput',
-        value: `${tasksPerSecond.toFixed(2)} tasks/sec`,
-      });
+      console.log();
+      const throughputData = [
+        {
+          key: 'Throughput',
+          value: `${tasksPerSecond.toFixed(2)} tasks/sec`,
+        },
+      ];
+      console.log(renderKeyValue(throughputData));
     }
-
-    console.log(renderKeyValue(timingData));
   }
 
   // Failure analysis

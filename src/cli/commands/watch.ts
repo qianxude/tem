@@ -22,7 +22,8 @@ interface BatchSummary {
 }
 
 interface TaskTiming {
-  avg_time: number;
+  avg_execution_time: number;  // Actual execution time (claimed_at to completed_at)
+  avg_lifetime: number;        // Total time including queue wait (created_at to completed_at)
 }
 
 interface RecentError {
@@ -90,12 +91,16 @@ function getTaskTiming(db: Database, batchId: string): TaskTiming | null {
   const rows = db.query<TaskTiming>(
     `SELECT
       AVG(
+        unixepoch(completed_at) - unixepoch(claimed_at)
+      ) * 1000 as avg_execution_time,
+      AVG(
         unixepoch(completed_at) - unixepoch(created_at)
-      ) * 1000 as avg_time
+      ) * 1000 as avg_lifetime
     FROM task
     WHERE batch_id = ?
       AND status = 'completed'
-      AND completed_at IS NOT NULL`,
+      AND completed_at IS NOT NULL
+      AND claimed_at IS NOT NULL`,
     [batchId]
   );
   return rows[0] || null;
@@ -280,14 +285,17 @@ function renderWatchDisplay(
   // Timing info
   lines.push('║  Performance                                                     ║');
   const throughput = calculateThroughput(summary, state);
-  const eta = calculateETA(summary, timing?.avg_time ?? null, state);
+  const eta = calculateETA(summary, timing?.avg_lifetime ?? null, state);
   const perfData = [
     { key: 'Throughput', value: throughput },
     { key: 'ETA', value: eta },
   ];
 
-  if (timing?.avg_time) {
-    perfData.push({ key: 'Avg Task', value: formatDuration(Math.round(timing.avg_time)) });
+  if (timing?.avg_execution_time) {
+    perfData.push({ key: 'Avg Execution', value: formatDuration(Math.round(timing.avg_execution_time)) });
+  }
+  if (timing?.avg_lifetime) {
+    perfData.push({ key: 'Avg Lifetime', value: formatDuration(Math.round(timing.avg_lifetime)) });
   }
 
   for (const item of perfData) {
@@ -367,7 +375,7 @@ function renderFinalReport(
   ));
 
   // Timing
-  if (timing && timing.avg_time !== null) {
+  if (timing && timing.avg_execution_time !== null) {
     lines.push('');
     lines.push('Timing Analysis');
     const elapsedWatch = Date.now() - state.startTime;
@@ -379,7 +387,8 @@ function renderFinalReport(
     }
 
     const timingData = [
-      { key: 'Avg Task Time', value: formatDuration(Math.round(timing.avg_time)) },
+      { key: 'Avg Execution', value: formatDuration(Math.round(timing.avg_execution_time)) },
+      { key: 'Avg Lifetime', value: formatDuration(Math.round(timing.avg_lifetime)) },
       { key: 'Throughput', value: throughput },
     ];
     lines.push(renderKeyValue(timingData));
